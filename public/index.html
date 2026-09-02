@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0D2621">
+<title>The Bee's House</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="/engine.js"></script>
+<script>
+(function () {
+'use strict';
+
+/* ============================================================
+   The client is a renderer, nothing more.
+   It holds no cards, runs no rules and decides nothing. Every
+   action is a round trip; the server's answer is the only truth.
+   That is what makes cheating structurally impossible rather
+   than merely discouraged.
+   ============================================================ */
+
+var h = React.createElement;
+var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
+function E(t){ return function(p){ var c=[].slice.call(arguments,1); return h.apply(null,[t,p].concat(c)); }; }
+var div=E('div'), btn=E('button'), span=E('span'), P=E('p'), H1=E('h1'), H2=E('h2'), H4=E('h4'),
+    ul=E('ul'), li=E('li'), inp=E('input'), I=E('i'), a_=E('a');
+
+var ROSTER = window.Engine.ROSTER;
+var powerOf = window.Engine.powerOf;
+
+/* ---------------------------------------------------- storage */
+var Store = {
+  key: function(code){ return 'beeshouse:' + code; },
+  get: function(code){ try { return JSON.parse(localStorage.getItem(this.key(code))||'null'); } catch(e){ return null; } },
+  set: function(code, v){ try { localStorage.setItem(this.key(code), JSON.stringify(v)); } catch(e){} },
+  clear: function(code){ try { localStorage.removeItem(this.key(code)); } catch(e){} }
+};
+
+/* ---------------------------------------------------- network */
+async function api(path, opts){
+  var res = await fetch(path, Object.assign({ headers:{'content-type':'application/json'} }, opts||{}));
+  var data = await res.json().catch(function(){ return {}; });
+  if (!res.ok) { var e = new Error(data.error || ('HTTP '+res.status)); e.status = res.status; e.version = data.version; throw e; }
+  return data;
+}
+var API = {
+  createRoom: function(players){ return api('/api/room', { method:'POST', body: JSON.stringify({players:players}) }); },
+  roomInfo:   function(code){ return api('/api/room?code='+encodeURIComponent(code)); },
+  claim:      function(code, seat){ return api('/api/claim', { method:'POST', body: JSON.stringify({code:code, seat:seat}) }); },
+  peek:       function(code, token, indices){ return api('/api/peek', { method:'POST', body: JSON.stringify({code:code, token:token, indices:indices}) }); },
+  state:      function(code, token){ return api('/api/state?code='+encodeURIComponent(code)+'&token='+encodeURIComponent(token)); },
+  move:       function(code, token, move, v){ return api('/api/move', { method:'POST', body: JSON.stringify({code:code, token:token, move:move, expectedVersion:v}) }); },
+  nextRound:  function(code, token){ return api('/api/next-round', { method:'POST', body: JSON.stringify({code:code, token:token}) }); }
+};
+
+/* ---------------------------------------------------- audio (unchanged from Phase 0) */
+var Audio_ = (function(){
+  var ctx=null, on=true;
+  function ac(){ if(!ctx){ try{ ctx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return null; } }
+    if(ctx.state==='suspended') ctx.resume(); return ctx; }
+  function tone(o){ var c=ac(); if(!c||!on) return;
+    var t=c.currentTime+(o.at||0), osc=c.createOscillator(), g=c.createGain();
+    osc.type=o.type||'sine'; osc.frequency.setValueAtTime(o.f,t);
+    if(o.f2) osc.frequency.exponentialRampToValueAtTime(Math.max(1,o.f2), t+(o.dur||.15));
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(o.g==null?.16:o.g,t+.012);
+    g.gain.exponentialRampToValueAtTime(.0008,t+(o.dur||.15));
+    osc.connect(g); g.connect(c.destination); osc.start(t); osc.stop(t+(o.dur||.15)+.04); }
+  function noise(o){ var c=ac(); if(!c||!on) return;
+    var t=c.currentTime+(o.at||0), len=Math.floor(c.sampleRate*(o.dur||.3));
+    var buf=c.createBuffer(1,len,c.sampleRate), d=buf.getChannelData(0);
+    for(var i=0;i<len;i++) d[i]=Math.random()*2-1;
+    var src=c.createBufferSource(); src.buffer=buf;
+    var f=c.createBiquadFilter(); f.type='lowpass';
+    f.frequency.setValueAtTime(o.from||600,t);
+    f.frequency.exponentialRampToValueAtTime(Math.max(80,o.to||4000),t+(o.dur||.3));
+    var g=c.createGain(); g.gain.setValueAtTime(o.g==null?.15:o.g,t);
+    g.gain.exponentialRampToValueAtTime(.0008,t+(o.dur||.3));
+    src.connect(f); f.connect(g); g.connect(c.destination); src.start(t); src.stop(t+(o.dur||.3)+.02); }
+  function seq(n,type,step){ n.forEach(function(f,i){ tone({f:f,type:type||'triangle',dur:.2,g:.13,at:i*(step||.085)}); }); }
+  return {
+    unlock:function(){ ac(); },
+    muted:function(){ return !on; },
+    toggle:function(){ on=!on; if(on) tone({f:880,dur:.09,g:.1,type:'triangle'}); return !on; },
+    tap:function(){ tone({f:520,f2:340,dur:.055,g:.07,type:'square'}); },
+    flip:function(){ tone({f:840,f2:520,dur:.08,g:.09,type:'triangle'}); noise({dur:.07,from:2600,to:900,g:.05}); },
+    deal:function(){ noise({dur:.05,from:3200,to:1200,g:.06}); },
+    place:function(){ tone({f:300,f2:190,dur:.1,g:.11}); noise({dur:.06,from:1800,to:600,g:.05}); },
+    peek:function(){ seq([660,990],'sine',.07); },
+    spy:function(){ seq([700,560,440],'sine',.07); },
+    swap:function(){ tone({f:400,f2:700,dur:.16,g:.1,type:'triangle'}); tone({f:700,f2:400,dur:.16,g:.1,type:'triangle'}); },
+    listen:function(){ seq([520,660,784],'sine',.1); },
+    sting:function(){ var c=ac(); if(!c||!on) return;
+      var t=c.currentTime,o=c.createOscillator(),l=c.createOscillator(),lg=c.createGain(),g=c.createGain();
+      o.type='sawtooth'; o.frequency.setValueAtTime(172,t); l.frequency.setValueAtTime(26,t); lg.gain.setValueAtTime(42,t);
+      l.connect(lg); lg.connect(o.frequency); g.gain.setValueAtTime(.001,t);
+      g.gain.linearRampToValueAtTime(.13,t+.05); g.gain.exponentialRampToValueAtTime(.0008,t+.75);
+      o.connect(g); g.connect(c.destination); o.start(t); l.start(t); o.stop(t+.8); l.stop(t+.8); },
+    sweep:function(){ noise({dur:.62,from:220,to:5200,g:.13}); tone({f:150,f2:70,dur:.5,g:.07}); },
+    good:function(){ seq([523,659,784,1047],'triangle',.065); },
+    bad:function(){ tone({f:190,f2:80,dur:.36,g:.16,type:'sawtooth'}); },
+    cabo:function(){ seq([392,523,659,880,1047],'square',.1); },
+    win:function(){ seq([523,659,784,1047,1319,1568],'triangle',.1); },
+    neck:function(){ seq([392,494,587],'sine',.09); }
+  };
+})();
+
+var REVEAL_MS = 3400;
+
+/* ---------------------------------------------------- pieces */
+function Card(props){
+  var cls = 'card ' + (props.face ? 'face' : props.empty ? 'empty' : 'back');
+  if (props.size) cls += ' ' + props.size;
+  if (props.sel) cls += ' sel';
+  if (props.onClick) cls += ' tap';
+  return div({ className:cls, onClick:props.onClick, role:props.onClick?'button':null,
+               tabIndex:props.onClick?0:null,
+               onKeyDown:props.onClick?function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); props.onClick(); } }:null },
+    props.face ? String(props.v) : props.empty ? '' : '⬢',
+    props.slot!=null ? div({className:'slot-n'}, props.slot) : null);
+}
+
+function TopBar(props){
+  var m = useState(Audio_.muted()), muted=m[0], setMuted=m[1];
+  return div({className:'topbar'},
+    span({className:'logo'}, '🐝 ', span({className:'long'}, 'THE BEE’S '), 'HOUSE'),
+    div({style:{flex:1}}),
+    props.code ? span({className:'chip'}, props.code) : null,
+    props.round ? span({className:'chip'}, 'R'+props.round+'/'+props.rounds) : null,
+    props.onTab ? btn({className:'icon-btn', 'aria-label':'The Tab', onClick:props.onTab}, '📒') : null,
+    btn({className:'icon-btn', 'aria-label':'Sound', onClick:function(){ setMuted(Audio_.toggle()); }}, muted?'🔇':'🔊'));
+}
+
+function Briefing(props){
+  var b = props.b;
+  if (!b) return null;
+  var did = b.youDidLast || [], since = b.sinceThen || [];
+  if (!did.length && !since.length && !b.worstOffender) return null;
+  return div({className:'brief'},
+    H4({}, 'What you did last time'),
+    did.length ? ul({}, did.map(function(t,i){ return li({key:i}, t); }))
+               : P({className:'none'}, 'Nothing yet — this is your first move.'),
+    H4({}, 'Since then'),
+    since.length ? ul({}, since.map(function(t,i){ return li({key:i}, t); }))
+                 : P({className:'none'}, 'Nothing. Suspiciously quiet.'),
+    b.worstOffender
+      ? P({className:'warn'}, 'That’s now ' + b.worstOffender.count + ' things ' + b.worstOffender.name + ' has done to you.')
+      : null,
+    P({className:'hint', style:{textAlign:'left', marginTop:'10px'}},
+      'What you saw is not in here. That part is still your job.'));
+}
+
+function Overlay(props){ return div({className:'ovl', role:'dialog', 'aria-modal':'true'}, props.children); }
+
+function RevealOverlay(props){
+  var r = props.reveal, close = props.close;
+  useEffect(function(){ var t=setTimeout(close, REVEAL_MS+600); return function(){ clearTimeout(t); }; },[]);
+  if (r.kind === 'card'){
+    return h(Overlay,null,
+      H2({}, r.title || 'Look'),
+      div({className:'reveal-card'}, h(Card,{face:true, v:r.v, size:'lg'})),
+      div({className:'ring run', style:{'--dur':(REVEAL_MS/1000)+'s'}}, I({})),
+      P({className:'sub'}, r.sub || 'Remember it. It will not be shown again.'),
+      btn({className:'btn primary', onClick:close}, 'Got it'));
+  }
+  if (r.kind === 'cards'){
+    return h(Overlay,null,
+      H2({}, r.title || 'Look'),
+      div({className:'row', style:{gap:'11px'}},
+        r.cards.map(function(c,i){ return h(Card,{key:i, face:true, v:c.v, slot:(c.slot!=null?c.slot+1:null)}); })),
+      div({className:'ring run', style:{'--dur':(REVEAL_MS/1000)+'s'}}, I({})),
+      P({className:'sub'}, r.sub || 'Remember them. Neither the table nor this app will show them again.'),
+      btn({className:'btn primary', onClick:close}, 'Got it'));
+  }
+  if (r.kind === 'answer'){
+    return h(Overlay,null,
+      H2({}, 'You heard'),
+      P({style:{fontSize:'19px', maxWidth:'24ch'}}, r.q),
+      div({style:{fontFamily:'var(--f-disp)', fontSize:'30px', color:'var(--brass)'}}, r.ans),
+      P({className:'sub'}, 'A card in ' + r.who + '. That is all you get.'),
+      btn({className:'btn primary', onClick:close}, 'Done'));
+  }
+  return h(Overlay,null, btn({className:'btn primary', onClick:close}, 'Close'));
+}
+
+/* ---------------------------------------------------- screens */
+
+function Home(props){
+  var s1 = useState(''), code=s1[0], setCode=s1[1];
+  var s2 = useState(null), err=s2[0], setErr=s2[1];
+  var s3 = useState(false), busy=s3[0], setBusy=s3[1];
+
+  async function create(){
+    setBusy(true); setErr(null);
+    try { Audio_.unlock(); var r = await API.createRoom(null); location.href = '/g/' + r.code; }
+    catch(e){ setErr(e.message); setBusy(false); }
+  }
+  function join(){
+    var c = code.trim().toUpperCase();
+    if (c.length < 3) { setErr('That is not a room code.'); return; }
+    location.href = '/g/' + c;
+  }
+
+  return div({className:'invite'},
+    div({className:'bee-big'}, '🐝'),
+    H1({className:'title'}, 'THE BEE’S', span({className:'amber'}, 'HOUSE')),
+    P({className:'invite-q'}, 'Cabo, played one move at a time.'),
+    err ? div({className:'err'}, err) : null,
+    div({className:'stack', style:{gap:'10px', width:'100%', maxWidth:'320px'}},
+      btn({className:'btn primary', disabled:busy, onClick:create}, busy ? 'Dealing…' : 'Start a new house'),
+      div({className:'field'},
+        inp({ value:code, placeholder:'Room code', maxLength:6, autoCapitalize:'characters',
+              onChange:function(e){ setCode(e.target.value.toUpperCase()); },
+              onKeyDown:function(e){ if(e.key==='Enter') join(); } })),
+      btn({className:'btn', onClick:join}, 'Join a house')),
+    P({className:'hint', style:{maxWidth:'32ch'}},
+      'Nobody has to be online at the same time. You get a link in the group, you play, you close it.'));
+}
+
+function SeatPicker(props){
+  var info = props.info, code = props.code;
+  var s = useState(null), err=s[0], setErr=s[1];
+  var b = useState(null), busy=b[0], setBusy=b[1];
+
+  async function take(seat){
+    setBusy(seat); setErr(null);
+    try {
+      Audio_.unlock(); Audio_.tap();
+      var r = await API.claim(code, seat);
+      Store.set(code, { token: r.token, seat: r.seat });
+      props.onClaimed(r.token);
+    } catch(e){ setErr(e.message); setBusy(null); }
+  }
+
+  return div({className:'stack', style:{gap:'14px', flex:1}},
+    div({className:'stack center', style:{gap:'4px', paddingTop:'8px'}},
+      span({className:'eyebrow'}, 'Room'),
+      div({className:'codebox'}, code),
+      P({className:'muted', style:{fontSize:'14px', maxWidth:'30ch', margin:'6px auto 0'}},
+        'Tap whoever you are. This device remembers it — you only do this once.')),
+    err ? div({className:'err'}, err) : null,
+    div({className:'seatgrid'},
+      info.seats.map(function(st){
+        var mine = false;
+        return btn({ key:st.seat, className:'seat ' + (st.claimed ? 'off' : 'on'),
+                     disabled: st.claimed || busy!=null,
+                     onClick:function(){ take(st.seat); } },
+          span({className:'emo'}, st.emo),
+          div({className:'stack', style:{flex:1, gap:'1px', minWidth:0, textAlign:'left'}},
+            span({style:{fontWeight:600}}, st.name),
+            span({className:'abil'}, st.claimed ? 'already on another phone' : st.ability)));
+      })),
+    P({className:'hint'}, 'Picked the wrong one? Whoever set the room up can free a seat.'));
+}
+
+
+function LobbyWait(props){
+  var view = props.view, code = props.code;
+  var url = location.origin + '/g/' + code;
+  var names = (view.waitingFor||[]).map(function(w){ return w.name; });
+  var text = "Come play Cabo in The Bee's House.\nRoom " + code + "\n" + url;
+  var copied = useState(false), was=copied[0], setWas=copied[1];
+  return div({className:'stack', style:{gap:'16px', flex:1}},
+    div({className:'wait', style:{flex:'0 0 auto'}},
+      div({className:'emo'}, '🐝'),
+      span({className:'eyebrow'}, 'Room ' + code),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'24px', color:'var(--brass)'}},
+        'Waiting for ' + (names.length===1 ? names[0] : names.length + ' more')),
+      P({className:'muted', style:{fontSize:'14px', maxWidth:'30ch'}},
+        names.length
+          ? 'Still to open the link: ' + names.join(', ') + '. Nothing starts until everyone has a seat.'
+          : 'Everyone is in.')),
+    div({className:'seatgrid'},
+      view.waitingFor.map(function(w){
+        return div({key:w.seat, className:'seat off'},
+          span({className:'emo'}, w.emo),
+          div({className:'stack', style:{flex:1, gap:'1px', textAlign:'left'}},
+            span({style:{fontWeight:600}}, w.name),
+            span({className:'abil'}, 'has not opened the link')));
+      })),
+    div({style:{flex:1}}),
+    btn({className:'btn wa', onClick:function(){ Audio_.tap();
+      window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'); }},
+      'Send the link to the group'),
+    btn({className:'btn ghost', onClick:function(){
+      if (navigator.clipboard) navigator.clipboard.writeText(url);
+      setWas(true); setTimeout(function(){ setWas(false); }, 1600); }},
+      was ? 'Copied' : 'Copy the link'),
+    btn({className:'btn ghost sm', onClick:props.refresh}, 'Check again'));
+}
+
+function PeekScreen(props){
+  var view = props.view, code = props.code, token = props.token;
+  var s1 = useState([]), sel=s1[0], setSel=s1[1];
+  var s2 = useState(null), err=s2[0], setErr=s2[1];
+  var s3 = useState(false), busy=s3[0], setBusy=s3[1];
+
+  function toggle(i){
+    Audio_.tap();
+    var n = sel.slice(), k = n.indexOf(i);
+    if (k>=0) n.splice(k,1); else if (n.length<2) n.push(i); else return;
+    setSel(n);
+  }
+  async function go(){
+    setBusy(true); setErr(null);
+    try { Audio_.flip(); var r = await API.peek(code, token, sel); props.onReveal(r.reveal); props.refresh(); }
+    catch(e){ setErr(e.message); setBusy(false); }
+  }
+
+  if (view.peekDone){
+    var left = view.players.filter(function(p){ return true; }).length;
+    return div({className:'wait'},
+      div({className:'spin'}),
+      span({className:'eyebrow'}, 'Waiting'),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'23px'}}, 'Everyone else is looking'),
+      P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch'}},
+        'You have had your two. The round starts when the last person has had theirs — which could be tomorrow.'),
+      btn({className:'btn', onClick:props.refresh}, 'Check again'));
+  }
+
+  return div({className:'stack', style:{gap:'16px', flex:1}},
+    div({className:'table-area', style:{gap:'16px'}},
+      div({className:'stack center', style:{gap:'4px'}},
+        span({className:'eyebrow'}, 'Opening peek'),
+        H2({style:{fontFamily:'var(--f-disp)', fontSize:'23px', color:'var(--brass)'}},
+          view.you.emo + ' ' + view.you.name),
+        P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch', margin:'0 auto'}},
+          'Choose any two of your four. You get one look. Nothing here will show them to you again.')),
+      err ? div({className:'err'}, err) : null,
+      div({className:'hand'},
+        view.you.hand.map(function(c,i){
+          return h(Card,{ key:c.id, slot:i+1, sel:sel.indexOf(i)>=0, onClick:function(){ toggle(i); } });
+        }))),
+    btn({className:'btn primary', disabled:sel.length!==2 || busy,
+         onClick:go}, busy ? 'Looking…' : sel.length!==2 ? 'Pick ' + (2-sel.length) + ' more' : 'Look at these two'),
+    P({className:'hint'}, 'Everyone does this at the same time, on their own phone.'));
+}
+
+function WaitScreen(props){
+  var view = props.view;
+  var cur = view.players[view.turn];
+  var nudge = props.nudge;
+  return div({className:'stack', style:{gap:'16px', flex:1}},
+    div({className:'wait', style:{flex:'0 0 auto', paddingBottom:'6px'}},
+      div({className:'emo'}, cur ? cur.emo : '🐝'),
+      span({className:'eyebrow'}, 'Not your turn'),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'25px', color:'var(--brass)'}},
+        cur ? cur.name + ' is up' : ''),
+      P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch'}},
+        'Nothing for you to do. Close the tab — you’ll get a message when it comes round.')),
+    h(Briefing, { b: view.briefing }),
+    div({style:{flex:1}}),
+    nudge ? btn({className:'btn wa', onClick:function(){ Audio_.tap(); window.open(nudge.whatsapp,'_blank'); }},
+              'Nudge the group about ' + nudge.forName) : null,
+    btn({className:'btn ghost', onClick:props.refresh}, 'Check again'));
+}
+
+function Board(props){
+  var view = props.view, send = props.send;
+  var me = view.you;
+  var top = view.discardTop;
+  var drawn = view.drawn;
+  var slapping = (view.sel || []).length > 0;
+
+  var opponents = div({className:'opponents'},
+    view.players.map(function(p){
+      if (p.seat === me.seat) return null;
+      return div({ key:p.id, className:'opp' + (p.calledCabo ? ' active' : '') },
+        span({className:'emo'}, p.emo),
+        span({className:'nm'}, p.name),
+        div({className:'mini'}, p.slots.map(function(c,k){ return I({key:k}); })));
+    }));
+
+  var piles = div({className:'piles'},
+    div({className:'pile'},
+      h(Card,{ empty:!view.deckCount, size:'sm',
+        onClick:(!drawn && !slapping) ? function(){ Audio_.deal(); send({type:'DRAW'}); } : null }),
+      span({className:'lbl'}, 'Deck · ' + view.deckCount)),
+    div({className:'pile'},
+      h(Card,{ face:!!top, v:top?top.v:0, empty:!top, size:'sm',
+        onClick:(!drawn && !slapping && top) ? function(){ Audio_.deal(); send({type:'TAKE_DISCARD'}); } : null }),
+      span({className:'lbl'}, 'Discard · ' + view.discardCount)),
+    drawn ? div({className:'pile'},
+      h(Card,{ face:true, v:drawn.v, size:'sm' }),
+      span({className:'lbl', style:{color:'var(--brass)'}}, 'In hand')) : null);
+
+  var prompt = drawn
+    ? div({className:'prompt'},
+        drawn.from === 'discard'
+          ? ['You took the ', h('b',{key:'v'}, String(drawn.v)), '. Off the discard it has to go into your hand — tap a slot.']
+          : powerOf(drawn.v)
+            ? ['You drew a ', h('b',{key:'v'}, String(drawn.v)), '. Throw it away to use its power, or put it in your hand.']
+            : ['You drew a ', h('b',{key:'v'}, String(drawn.v)), '. Tap a slot to keep it, or throw it away.'])
+    : slapping
+      ? div({className:'prompt'}, 'Claiming ', h('b',null,String(view.sel.length)),
+          view.sel.length===1 ? ' card is a ' : ' cards are all ', h('b',null, top?String(top.v):'—'),
+          '. Wrong and you take a penalty card.')
+      : null;
+
+  var hand = div({},
+    div({className:'you-hdr'},
+      span({className:'emo'}, me.emo),
+      span({className:'nm'}, me.name),
+      span({className:'chip'}, me.ability + (me.abilityUsed ? ' · used' : ' · ready'))),
+    div({className:'hand'},
+      me.hand.map(function(c,i){
+        return h(Card,{ key:c.id, slot:i+1, sel:(view.sel||[]).indexOf(i)>=0,
+          onClick: drawn
+            ? function(){ Audio_.place(); send({type:'PLACE', idx:i}); }
+            : top
+              ? function(){ Audio_.tap(); send({type:'SLAP_TOGGLE', idx:i}); }
+              : null });
+      })));
+
+  var actions;
+  if (view.pendingEnd){
+    actions = div({className:'actions'},
+      btn({className:'act gold wide', onClick:function(){ Audio_.flip(); send({type:'END_TURN'}); }},
+        span({className:'t'}, view.extra>0 ? 'Charge — take your second action' : 'End turn'),
+        span({className:'s'}, view.extra>0 ? 'Rhino' : 'Hands over to the next player')));
+  } else if (drawn){
+    actions = drawn.from==='discard'
+      ? div({className:'actions'}, P({className:'hint wide'}, 'Tap one of your slots to swap it in.'))
+      : div({className:'actions'},
+          btn({className:'act gold wide', onClick:function(){ Audio_.place(); send({type:'DISCARD_DRAWN'}); }},
+            span({className:'t'}, 'Throw it away'),
+            span({className:'s'}, powerOf(drawn.v) ? 'Uses its ' + powerOf(drawn.v).toUpperCase() + ' power' : 'No power on this one')),
+          P({className:'hint wide'}, 'Or tap one of your slots to swap it in.'));
+  } else if (slapping){
+    actions = div({className:'actions'},
+      btn({className:'act red', onClick:function(){ send({type:'SLAP_GO'}); }},
+        span({className:'t'},'Slap it down'), span({className:'s'}, view.sel.length + ' card' + (view.sel.length===1?'':'s'))),
+      btn({className:'act', onClick:function(){ Audio_.tap(); view.sel.forEach(function(i){ send({type:'SLAP_TOGGLE', idx:i}); }); }},
+        span({className:'t'},'Cancel'), span({className:'s'},'Put them back')));
+  } else {
+    actions = div({className:'actions'},
+      btn({className:'act gold', onClick:function(){ Audio_.deal(); send({type:'DRAW'}); }},
+        span({className:'t'},'Draw'), span({className:'s'},'From the deck')),
+      btn({className:'act', disabled:!top, onClick:function(){ Audio_.deal(); send({type:'TAKE_DISCARD'}); }},
+        span({className:'t'},'Take discard'), span({className:'s'}, top ? ('The '+top.v) : 'Empty')),
+      btn({className:'act', disabled:me.sweepUsed || !view.discardCount,
+           onClick:function(){ Audio_.sweep(); send({type:'SWEEP'}); }},
+        span({className:'t'},'🧹 Sweep'), span({className:'s'}, me.sweepUsed ? 'Used this round' : 'Wipe the pile')),
+      btn({className:'act', disabled:me.abilityUsed, onClick:function(){ Audio_.tap(); send({type:'ABILITY'}); }},
+        span({className:'t'}, me.emo + ' ' + me.ability), span({className:'s'}, me.abilityUsed ? 'Used this round' : 'Once per round')),
+      view.caboBy === null
+        ? btn({className:'act red wide', onClick:function(){ Audio_.cabo(); send({type:'CABO'}); }},
+            span({className:'t'},'Call CABO'), span({className:'s'},'Ends the round. Be sure.'))
+        : div({className:'prompt wide', style:{margin:0}}, 'Cabo is called. Play it out.'));
+  }
+
+  return div({className:'stack', style:{flex:1, gap:'0'}},
+    view.briefing && (view.briefing.sinceThen||[]).length
+      ? div({style:{marginBottom:'12px'}}, h(Briefing,{b:view.briefing})) : null,
+    div({className:'table-area'}, opponents, piles, prompt, hand),
+    actions);
+}
+
+/* prompts that need a second choice — all resolved by asking the server */
+function ChoiceModal(props){
+  var view = props.view, send = props.send, kind = view.modalKind;
+  var st = useState({}), pick=st[0], setPick=st[1];
+  useEffect(function(){ setPick({}); }, [kind]);
+  var me = view.you;
+  var others = view.players.filter(function(p){ return p.seat !== me.seat; });
+  function close(){ send({type:'CLOSE_MODAL'}); }
+
+  if (kind === 'choosePeek'){
+    if (pick.stage === 'peek'){
+      return h(Overlay,null, H2({},'Peek — which of yours?'),
+        div({className:'hand'}, me.hand.map(function(c,i){
+          return h(Card,{key:c.id, slot:i+1, onClick:function(){ Audio_.peek(); send({type:'PEEK_OWN', idx:i}); }});
+        })));
+    }
+    if (pick.stage === 'listenTarget'){
+      return h(Overlay,null, H2({},'Listen — whose card?'),
+        P({className:'sub'},'Any card on the table. Even ones you could never look at.'),
+        div({className:'plist'}, view.players.map(function(p){
+          return div({key:p.id, className:'stack', style:{gap:'6px'}},
+            div({className:'prow'}, span({className:'emo'},p.emo),
+              span({className:'nm'}, p.seat===me.seat ? 'You' : p.name)),
+            div({className:'row', style:{gap:'7px', justifyContent:'center'}},
+              p.slots.map(function(c,k){
+                return h(Card,{key:c.id, size:'sm', slot:k+1,
+                  onClick:function(){ setPick({stage:'listenQ', seat:p.seat, idx:k}); }});
+              })));
+        })));
+    }
+    if (pick.stage === 'listenQ'){
+      var QS = ['Is it even?','Is it under 5?','Is it over 9?','Is it a power card?'];
+      return h(Overlay,null, H2({},'Ask one question'),
+        P({className:'sub'},'You get a true answer, and only that. The card itself never travels.'),
+        div({className:'qgrid'}, QS.map(function(q,i){
+          return btn({key:i, className:'btn', onClick:function(){ Audio_.listen();
+            send({type:'LISTEN_ANSWER', seat:pick.seat, idx:pick.idx, qIndex:i}); }}, q);
+        })));
+    }
+    return h(Overlay,null,
+      H2({},'Seven or eight'),
+      P({className:'sub'},'Look at one of your own — or listen instead, and learn one true thing about anybody’s.'),
+      div({className:'qgrid'},
+        btn({className:'btn primary', onClick:function(){ setPick({stage:'peek'}); }}, '👁️  Peek at one of mine'),
+        btn({className:'btn', onClick:function(){ setPick({stage:'listenTarget'}); }}, '👂  Listen to anyone’s')));
+  }
+
+  if (kind === 'spyPick'){
+    if (pick.seat != null){
+      var tp = view.players.filter(function(p){ return p.seat===pick.seat; })[0];
+      return h(Overlay,null, H2({},'Spy on ' + tp.name),
+        div({className:'hand'}, tp.slots.map(function(c,i){
+          return h(Card,{key:c.id, size:'sm', slot:i+1,
+            onClick:function(){ Audio_.spy(); send({type:'SPY', seat:pick.seat, idx:i}); }});
+        })));
+    }
+    return h(Overlay,null, H2({},'Nine or ten — Spy'),
+      P({className:'sub'},'Look at one card belonging to somebody else.'),
+      div({className:'plist'}, others.map(function(p){
+        return btn({key:p.id, className:'prow', onClick:function(){ setPick({seat:p.seat}); }},
+          span({className:'emo'},p.emo), span({className:'nm'},p.name));
+      })));
+  }
+
+  if (kind === 'swapMine'){
+    if (pick.mine == null){
+      return h(Overlay,null, H2({},'Eleven or twelve — Swap'),
+        P({className:'sub'},'Blind. Pick one of yours first. You will not see either card.'),
+        div({className:'hand'}, me.hand.map(function(c,i){
+          return h(Card,{key:c.id, slot:i+1, onClick:function(){ Audio_.tap(); setPick({mine:i}); }});
+        })));
+    }
+    if (pick.seat == null){
+      return h(Overlay,null, H2({},'Swap with whom?'),
+        div({className:'plist'}, others.map(function(p){
+          return btn({key:p.id, className:'prow', onClick:function(){ setPick({mine:pick.mine, seat:p.seat}); }},
+            span({className:'emo'},p.emo), span({className:'nm'},p.name));
+        })));
+    }
+    var t2 = view.players.filter(function(p){ return p.seat===pick.seat; })[0];
+    return h(Overlay,null, H2({},'Which of ' + t2.name + '’s?'),
+      div({className:'hand'}, t2.slots.map(function(c,i){
+        return h(Card,{key:c.id, size:'sm', slot:i+1,
+          onClick:function(){ Audio_.swap(); send({type:'SWAP_DO', seat:pick.seat, mine:pick.mine, idx:i}); }});
+      })));
+  }
+
+  if (kind === 'sting'){
+    var chosen = pick.list || [];
+    if (others.length < 2)
+      return h(Overlay,null, H2({},'Nobody to sting'),
+        P({className:'sub'},'Sting needs two other people at the table.'),
+        btn({className:'btn primary', onClick:close},'Fine'));
+    return h(Overlay,null,
+      H2({},'🐝  Sting'),
+      P({className:'sub'},'Pick two other people. They each hand over a card at random, to each other. You never learn what moved.'),
+      div({className:'plist'}, others.map(function(p){
+        var on = chosen.indexOf(p.seat)>=0;
+        return btn({key:p.id, className:'prow'+(on?' sel':''), onClick:function(){
+            Audio_.tap();
+            var l = chosen.slice(), k = l.indexOf(p.seat);
+            if (k>=0) l.splice(k,1); else if (l.length<2) l.push(p.seat); else return;
+            setPick({list:l});
+          }}, span({className:'emo'},p.emo), span({className:'nm'},p.name));
+      })),
+      btn({className:'btn primary', disabled:chosen.length!==2,
+           onClick:function(){ Audio_.sting(); send({type:'STING_DONE', a:chosen[0], b:chosen[1]}); }},
+        chosen.length===2 ? 'Sting them' : 'Pick two'),
+      btn({className:'btn ghost sm', onClick:close}, 'Never mind, save it'));
+  }
+
+  if (kind === 'neck'){
+    // the top three arrived as a one-time reveal; the client holds them only
+    // for as long as this prompt is open
+    var cards = props.neckCards || [];
+    var order = pick.order || [];
+    if (!cards.length)
+      return h(Overlay,null, H2({},'Long Neck'),
+        P({className:'sub'},'Reloaded mid-look, so the cards are gone. That is the rule working, not a bug.'),
+        btn({className:'btn primary', onClick:close}, 'Fair'));
+    return h(Overlay,null,
+      H2({},'🦒  Long Neck'),
+      P({className:'sub'},'Tap them in the order you want them dealt out — first tap comes off next.'),
+      div({className:'row', style:{gap:'10px'}},
+        cards.map(function(c,i){
+          var pos = order.indexOf(i);
+          return div({key:c.id, className:'stack center', style:{gap:'5px'}},
+            h(Card,{ face:true, v:c.v, sel:pos>=0, onClick:function(){
+              Audio_.neck();
+              var l=order.slice(), k=l.indexOf(i);
+              if(k>=0) l.splice(k,1); else l.push(i);
+              setPick({order:l});
+            }}),
+            span({className:'lbl', style:{fontSize:'11px', color:pos>=0?'var(--brass)':'var(--cream-dim)'}},
+              pos>=0 ? ('#'+(pos+1)) : '·'));
+        })),
+      btn({className:'btn primary', disabled:order.length!==cards.length,
+           onClick:function(){ send({type:'NECK_DONE', order: order.map(function(i){ return cards[i]; })}); }},
+        order.length===cards.length ? 'Put them back like that' : 'Tap all three'),
+      btn({className:'btn ghost sm', onClick:close}, 'Never mind, save it'));
+  }
+
+  if (kind === 'slapGood' || kind === 'slapBad' || kind === 'note' || kind === 'listenResult'){
+    return h(Overlay,null,
+      H2({}, kind==='slapBad' ? 'WRONG' : kind==='slapGood' ? 'CLEAN' : 'Right'),
+      P({className:'sub'}, kind==='slapBad'
+        ? 'That was not a match. It comes back and you take a penalty card.'
+        : kind==='slapGood' ? 'Gone. Your hand got smaller and your score got lower.'
+        : 'Carry on.'),
+      btn({className:'btn primary', onClick:close}, 'OK'));
+  }
+  return null;
+}
+
+function RoundEnd(props){
+  var view = props.view;
+  useEffect(function(){ Audio_.good(); },[]);
+  var rows = (view.lastScores || []).slice().sort(function(a,b){ return a.score-b.score; });
+  var hands = {};
+  (view.reveal_all || []).forEach(function(r){ hands[r.id] = r.hand; });
+  return div({className:'stack', style:{gap:'16px', flex:1}},
+    div({className:'stack center', style:{gap:'3px'}},
+      span({className:'eyebrow'}, 'Round ' + view.round + ' done'),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'26px', color:'var(--brass)'}},
+        rows.length ? rows[0].emo + ' ' + rows[0].name + ' takes it' : '')),
+    div({className:'stack', style:{gap:'12px'}},
+      rows.map(function(r){
+        return div({key:r.id, className:'stack', style:{gap:'5px'}},
+          div({className:'row', style:{gap:'8px'}},
+            span({style:{fontSize:'18px'}}, r.emo),
+            span({style:{fontWeight:600, fontSize:'14.5px'}}, r.name),
+            r.called ? span({className:'chip', style:{borderColor:'var(--brass)', color:'var(--brass)'}},
+              r.busted ? 'Cabo, missed' : 'Cabo, clean') : null,
+            div({style:{flex:1}}),
+            span({style:{fontFamily:'var(--f-num)', fontWeight:600, color:r.score===0?'var(--mint)':'var(--cream)'}},
+              String(r.score))),
+          div({className:'row', style:{gap:'6px'}},
+            (hands[r.id]||[]).map(function(c){ return h(Card,{key:c.id, face:true, v:c.v, size:'sm'}); })));
+      })),
+    div({style:{flex:1}}),
+    btn({className:'btn primary', onClick:props.next},
+      view.round >= view.rounds ? 'See the final table' : 'Deal round ' + (view.round+1)));
+}
+
+function MatchEnd(props){
+  var view = props.view;
+  var st = useState('standings'), stage=st[0], setStage=st[1];
+  useEffect(function(){ Audio_.good(); },[]);
+  var base = view.players.map(function(p){ return { p:p, t: view.totals[p.id]||0 }; })
+                         .sort(function(a,b){ return a.t-b.t; });
+  var leader = base[0].p;
+  var rows = view.players.map(function(p){
+    var owed = p.id === leader.id ? 0
+      : (view.tab||[]).filter(function(e){ return e.by === leader.id && (e.to||[]).indexOf(p.id)>=0; }).length;
+    var b = view.totals[p.id]||0;
+    return { p:p, base:b, owed:owed, final:b-owed };
+  }).sort(function(a,b){ return a.final-b.final; });
+
+  if (stage === 'standings'){
+    return div({className:'stack', style:{gap:'18px', flex:1}},
+      div({className:'stack center', style:{gap:'8px', paddingTop:'14px'}},
+        div({style:{fontSize:'58px'}}, leader.emo),
+        span({className:'eyebrow'}, 'Three rounds played'),
+        H1({className:'title', style:{fontSize:'30px'}}, leader.name.toUpperCase() + ' IS AHEAD'),
+        P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch'}},
+          base[0].t + ' points. Lowest wins. But nothing is final until the Tab is settled.')),
+      div({style:{flex:1}}),
+      btn({className:'btn primary', onClick:function(){ Audio_.cabo(); setStage('settled'); }},
+        '📒  Settle the Tab'),
+      P({className:'hint'}, 'Everything anybody did to anybody has been counted the whole time. You just have not been shown the price.'));
+  }
+
+  var w = rows[0];
+  var changed = w.p.id !== leader.id;
+  var debts = rows.filter(function(r){ return r.owed>0; });
+  return div({className:'stack', style:{gap:'16px', flex:1}},
+    div({className:'stack center', style:{gap:'6px', paddingTop:'10px'}},
+      span({className:'eyebrow'},'The Tab settles'),
+      P({style:{fontSize:'14.5px', maxWidth:'32ch', color:'var(--cream-dim)'}},
+        leader.name + ' finished ahead. Everyone now takes one point off for every single thing ' + leader.name + ' did to them.')),
+    debts.length
+      ? div({className:'stack', style:{gap:'0'}}, debts.map(function(r){
+          return div({key:r.p.id, className:'tab-e'},
+            span({className:'rd'}, '−'+r.owed),
+            span({}, h('b',null,r.p.name), ' was on the wrong end of ', h('b',null,String(r.owed)),
+              r.owed===1 ? ' thing.' : ' things.'));
+        }))
+      : P({className:'hint'}, leader.name + ' got through the whole match without bothering anybody.'),
+    div({className:'stack center', style:{gap:'6px'}},
+      div({style:{fontSize:'56px'}}, w.p.emo),
+      span({className:'eyebrow'}, changed ? 'The Tab changed the winner' : 'The Tab held'),
+      H1({className:'title', style:{fontSize:'32px'}}, w.p.name.toUpperCase()),
+      P({className:'muted', style:{fontSize:'14px'}}, w.final + ' points after settlement.')),
+    div({style:{flex:1}}),
+    btn({className:'btn primary', onClick:function(){ location.href='/'; }}, 'New house'));
+}
+
+function TabDrawer(props){
+  var view = props.view;
+  return div({className:'drawer'},
+    div({className:'drawer-in'},
+      div({className:'topbar'},
+        span({className:'logo'},'📒 THE TAB'),
+        div({style:{flex:1}}),
+        btn({className:'icon-btn', onClick:props.close, 'aria-label':'Close'},'✕')),
+      P({className:'muted', style:{fontSize:'13.5px', marginBottom:'10px'}},
+        'Everything anybody did to anybody, as it happens. What it costs stays hidden until the end.'),
+      (view.tab||[]).length
+        ? div({}, view.tab.map(function(e,i){
+            return div({key:i, className:'tab-e'}, span({className:'rd'}, e.r?('R'+e.r):'—'), span({}, e.t));
+          }))
+        : P({className:'hint'}, 'Nothing yet. Give it a round.')));
+}
+
+/* ---------------------------------------------------- root */
+function App(){
+  var m = location.pathname.match(/^\/g\/([A-Za-z0-9]+)/);
+  var code = m ? m[1].toUpperCase() : null;
+
+  var s1 = useState(null),  view=s1[0],  setView=s1[1];
+  var s2 = useState(null),  info=s2[0],  setInfo=s2[1];
+  var s3 = useState(function(){ var v = code && Store.get(code); return v ? v.token : null; }),
+      token=s3[0], setToken=s3[1];
+  var s4 = useState(null),  err=s4[0],   setErr=s4[1];
+  var s5 = useState(null),  reveal=s5[0],setReveal=s5[1];
+  var s6 = useState(false), tab=s6[0],   setTab=s6[1];
+  var s7 = useState(null),  neck=s7[0],  setNeck=s7[1];
+  var s8 = useState(false), busy=s8[0],  setBusy=s8[1];
+  var s9 = useState(null),  handoff=s9[0], setHandoff=s9[1];
+
+  async function refresh(){
+    if (!code) return;
+    try {
+      if (!token){ setInfo(await API.roomInfo(code)); return; }
+      var v = await API.state(code, token);
+      setView(v); setErr(null);
+    } catch(e){
+      if (e.status === 401){ Store.clear(code); setToken(null); setInfo(await API.roomInfo(code).catch(function(){return null;})); }
+      else setErr(e.message);
+    }
+  }
+
+  useEffect(function(){ refresh(); }, [code, token]);
+  // async play means staleness is cheap, so just re-check when you come back
+  useEffect(function(){
+    function onFocus(){ refresh(); }
+    window.addEventListener('focus', onFocus);
+    return function(){ window.removeEventListener('focus', onFocus); };
+  }, [code, token]);
+
+  async function send(move){
+    if (busy) return;
+    setBusy(true);
+    try {
+      var r = await API.move(code, token, move, view ? view.version : null);
+      setView(Object.assign({}, r.view, { briefing: view && view.briefing }));
+      if (r.reveal){
+        if (r.reveal.kind === 'cards' && r.view.modalKind === 'neck') setNeck(r.reveal.cards);
+        setReveal(r.reveal);
+      }
+      // turn just ended → offer the group nudge
+      if (move.type === 'END_TURN' && r.view.phase === 'turn' && r.view.turn !== r.view.you.seat){
+        var nx = r.view.players[r.view.turn];
+        var url = location.origin + '/g/' + code;
+        var text = nx.emo + ' ' + nx.name + " — you're up in The Bee's House."
+                 + '\nRound ' + r.view.round + ' of ' + r.view.rounds + '.\n' + url;
+        setHandoff({ name: nx.name, emo: nx.emo, whatsapp: 'https://wa.me/?text=' + encodeURIComponent(text), text: text });
+      }
+      setErr(null);
+    } catch(e){
+      if (e.status === 409){ setErr(e.message); await refresh(); }
+      else setErr(e.message);
+    } finally { setBusy(false); }
+  }
+
+  async function next(){
+    setBusy(true);
+    try { setView(await API.nextRound(code, token)); } catch(e){ setErr(e.message); } finally { setBusy(false); }
+  }
+
+  if (!code) return div({className:'shell'}, h(Home));
+
+  if (!token){
+    return div({className:'shell'},
+      h(TopBar,{code:code}),
+      err ? div({className:'err'}, err) : null,
+      info ? h(SeatPicker,{ info:info, code:code, onClaimed:function(t){ setToken(t); } })
+           : div({className:'wait'}, div({className:'spin'})));
+  }
+
+  if (!view) return div({className:'shell'}, h(TopBar,{code:code}),
+    err ? div({className:'err'}, err) : div({className:'wait'}, div({className:'spin'})));
+
+  var body;
+  if (view.allClaimed === false)
+    body = h(LobbyWait,{ view:view, code:code, refresh:refresh });
+  else if (view.phase === 'peek')
+    body = h(PeekScreen,{ view:view, code:code, token:token, refresh:refresh,
+                          onReveal:function(r){ setReveal(r); } });
+  else if (view.phase === 'roundEnd') body = h(RoundEnd,{ view:view, next:next });
+  else if (view.phase === 'matchEnd') body = h(MatchEnd,{ view:view });
+  else if (view.phase === 'turn')
+    body = view.yourTurn ? h(Board,{ view:view, send:send })
+                         : h(WaitScreen,{ view:view, refresh:refresh,
+                             nudge: (function(){
+                               var nx = view.players[view.turn]; if(!nx) return null;
+                               var url = location.origin + '/g/' + code;
+                               var text = nx.emo + ' ' + nx.name + " — you're up in The Bee's House.\nRound "
+                                        + view.round + ' of ' + view.rounds + '.\n' + url;
+                               return { forName: nx.name, whatsapp:'https://wa.me/?text=' + encodeURIComponent(text) };
+                             })() });
+  else body = div({className:'wait'}, div({className:'spin'}));
+
+  return div({className:'shell'},
+    h(TopBar,{ code:code, round:view.round, rounds:view.rounds, onTab:function(){ setTab(true); } }),
+    err ? div({className:'err'}, err) : null,
+    body,
+    (view.yourTurn && view.modalKind && !reveal)
+      ? h(ChoiceModal,{ view:view, send:send, neckCards:neck }) : null,
+    reveal ? h(RevealOverlay,{ reveal:reveal, close:function(){ setReveal(null); } }) : null,
+    handoff ? h(Overlay,null,
+        div({style:{fontSize:'54px'}}, handoff.emo),
+        H2({},'Turn passed'),
+        P({className:'sub'}, 'It’s ' + handoff.name + '’s move now. Send it to the group so they know — one tap.'),
+        btn({className:'btn wa', onClick:function(){ window.open(handoff.whatsapp,'_blank'); setHandoff(null); }},
+          'Tell the group'),
+        btn({className:'btn ghost sm', onClick:function(){ setHandoff(null); }}, 'Skip')) : null,
+    tab ? h(TabDrawer,{ view:view, close:function(){ setTab(false); } }) : null);
+}
+
+ReactDOM.createRoot(document.getElementById('app')).render(h(App));
+})();
+</script>
+</body>
+</html>

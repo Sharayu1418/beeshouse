@@ -1,0 +1,24 @@
+{
+  "name": "beeshouse",
+  "version": "1.0.0",
+  "description": "The Bee's House \u2014 Cabo, played one move at a time.",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "dev": "node server.js",
+    "test": "node test/engine.fuzz.js && node test/redact.test.js && node test/db.test.js && node test/service.test.js",
+    "test:browser": "node test/browser.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^8.23.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
