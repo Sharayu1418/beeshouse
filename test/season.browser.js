@@ -136,6 +136,8 @@ async function toSettlement(p){
   await p.waitForSelector('.scores', { timeout:15000 });
   const board = await p.textContent('.shell');
   ok(/1 of 3 matches played/.test(board), 'the season opened on match 1 of 3');
+  ok(/SEASON \d+/.test(await p.textContent('.title')),
+     'the season named itself by number (' + (await p.textContent('.title')) + ')');
   ok((await p.$$('.pip.on')).length === 1, 'one pip lit for one match played');
   ok((await p.$$('.pip')).length === 3, 'three pips for three matches');
   ok(/Deal match 2/.test(board), 'and it offers the next match');

@@ -75,4 +75,4 @@ proved to fail the suite, including that one.
 ## Still open
 
 - Direct nudges. Phone numbers are stored; the nudge goes to the group by choice.
-- A season has no name unless one is passed. The screen says "The Season".
+- Nothing else. Seasons name themselves by number.

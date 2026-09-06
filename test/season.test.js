@@ -292,6 +292,18 @@ async function run(db, label){
   ok(half.extras.totalMoves === 0 && half.extras.totalTab === 0,
      'THE POINT: an unfinished match contributes nothing to a season number');
 
+  /* --- seasons name themselves ---------------------------------------
+     Nobody types a name into a phone on the way out of a match, so they are
+     numbered. The count is global because there is exactly one group. */
+  const before = await db.countSeasons();
+  const n1 = await S.createSeason({ matchTarget: 2 });
+  const n2 = await S.createSeason({ matchTarget: 2 });
+  ok(n1.name === 'Season ' + (before + 1), 'an unnamed season numbers itself (' + n1.name + ')');
+  ok(n2.name === 'Season ' + (before + 2), 'and the next one takes the next number (' + n2.name + ')');
+  ok((await S.seasonStandings(n1.code)).name === n1.name, 'the number comes back on the standings');
+  const named = await S.createSeason({ matchTarget: 2, name: 'The Grudge' });
+  ok(named.name === 'The Grudge', 'an explicit name still wins');
+
   // --- nothing that could betray a card may reach any of it ------------
   const leaked = scanForCards(final, 'season', []);
   ok(leaked.length === 0, 'no rank, suit or value reaches the season payload:\n     ' + leaked.join('\n     '));

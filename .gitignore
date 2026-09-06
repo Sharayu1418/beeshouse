@@ -10,3 +10,6 @@ node_modules/
 .vercel
 *.log
 cards-sheet.html
+
+# scratch copies of the repo, made to run the browser suite elsewhere
+*.tgz
