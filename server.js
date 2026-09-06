@@ -13,9 +13,16 @@ const ROUTES = {
   '/api/room':       require('./api/room.js'),
   '/api/claim':      require('./api/claim.js'),
   '/api/peek':       require('./api/peek.js'),
+  '/api/ready':      require('./api/ready.js'),
   '/api/state':      require('./api/state.js'),
   '/api/move':       require('./api/move.js'),
   '/api/next-round': require('./api/next-round.js'),
+  '/api/replay':     require('./api/replay.js'),
+  '/api/season':     require('./api/season.js'),
+  '/api/recap':      require('./api/recap.js'),
+  '/api/skip':       require('./api/skip.js'),
+  '/api/seat-request': require('./api/seat-request.js'),
+  '/api/seat-decide':  require('./api/seat-decide.js'),
   '/api/phone':      require('./api/phone.js')
 };
 

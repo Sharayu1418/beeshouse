@@ -91,7 +91,20 @@ alter table rounds  enable row level security;
 alter table moves   enable row level security;
 alter table scores  enable row level security;
 
-revoke all on games, players, rounds, moves, scores from anon, authenticated;
+-- Supabase ships `anon` and `authenticated` roles; Vercel Postgres and Neon
+-- do not, and on some hosts you cannot create them. Revoking from a role that
+-- does not exist aborts the whole script, so only revoke what is actually there.
+-- RLS above is the real protection; this is defence in depth.
+do $$
+declare r text;
+begin
+  foreach r in array array['anon','authenticated'] loop
+    if exists (select 1 from pg_roles where rolname = r) then
+      execute format('revoke all on games, players, rounds, moves, scores from %I', r);
+      raise notice 'revoked public access from role %', r;
+    end if;
+  end loop;
+end $$;
 
 -- ------------------------------------------------------ realtime pings
 -- Realtime is optional (WhatsApp is the notification layer), but if it is
@@ -99,3 +112,39 @@ revoke all on games, players, rounds, moves, scores from anon, authenticated;
 -- every player's cards.
 --
 --   alter publication supabase_realtime add table games;
+
+-- --------------------------------------------------------------- seasons
+-- A season is a run of matches between the same people. Matches still
+-- settle their own Tab at the end; the season is the running total on top.
+--
+-- Added in Phase 2. Nothing above was removed: `scores`, which sat unused
+-- since Phase 1, is finally the thing this reads.
+
+create table if not exists seasons (
+  id           uuid primary key default gen_random_uuid(),
+  code         text unique not null,          -- shareable, like a room code
+  name         text,
+  match_target int  not null default 5,       -- how many matches make a season
+  status       text not null default 'open',  -- open | done
+  created_at   timestamptz not null default now(),
+  ended_at     timestamptz
+);
+
+alter table games add column if not exists season_id uuid references seasons(id) on delete set null;
+alter table games add column if not exists match_no  int;
+alter table games add column if not exists finished_at timestamptz;
+
+create index if not exists games_season_idx on games (season_id, match_no);
+create index if not exists scores_game_idx  on scores (game_id);
+
+alter table seasons enable row level security;
+
+do $$
+declare r text;
+begin
+  foreach r in array array['anon','authenticated'] loop
+    if exists (select 1 from pg_roles where rolname = r) then
+      execute format('revoke all on seasons from %I', r);
+    end if;
+  end loop;
+end $$;

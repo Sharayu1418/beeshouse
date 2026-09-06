@@ -1,4 +1,12 @@
 node_modules/
+
+# Every shape of env file, not just ".env".
+# The old rule was exactly ".env", which does NOT match ".env.local", and
+# ".env.local" is the file Vercel writes your Postgres password into.
 .env
+.env.*
+!.env.example
+
 .vercel
 *.log
+cards-sheet.html

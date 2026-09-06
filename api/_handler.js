@@ -10,6 +10,11 @@ function svc() {
   if (!_svc) { _db = makeDb({}); _svc = makeService(_db); }
   return _svc;
 }
+/* The same storage the routes are using. Exported so a test that boots the
+   server in its own process can reach past HTTP when it has to, which is
+   the only way to fake the passage of two days. Nothing in the app calls
+   this. */
+function db() { svc(); return _db; }
 
 async function readBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -40,4 +45,4 @@ function route(fn) {
   };
 }
 
-module.exports = { route, svc, readBody };
+module.exports = { route, svc, db, readBody };

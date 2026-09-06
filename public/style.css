@@ -66,7 +66,14 @@ p{margin:0}
 .logo{font-family:var(--f-disp);font-size:15px;letter-spacing:.02em;color:var(--brass);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex-shrink:1}
 .topbar{flex-wrap:nowrap}
-@media(max-width:420px){ .logo{font-size:13px} .logo .long{display:none} .chip{padding:5px 7px;font-size:10px} }
+@media(max-width:430px){
+  .logo{font-size:11px;letter-spacing:0}
+  .chip{padding:4px 7px;font-size:10px}
+  .icon-btn{width:30px;height:30px;font-size:13px}
+  .topbar{gap:6px}
+}
+@media(max-width:360px){ .logo .long{display:none} }
+@media(max-width:330px){ .logo .long{display:none} }
 .chip{
   font-size:11px;padding:5px 9px;border-radius:99px;border:1px solid var(--line);
   color:var(--cream-dim);font-weight:600;letter-spacing:.04em;white-space:nowrap;
@@ -87,6 +94,36 @@ p{margin:0}
 .yes-btn{position:absolute;left:0;top:0;width:calc(50% - 8px)}
 .no-btn{position:absolute;right:0;top:0;width:calc(50% - 8px);transition:transform .34s cubic-bezier(.2,1.3,.4,1)}
 .refuse-count{position:absolute;bottom:6px;width:100%;text-align:center;font-size:12.5px}
+
+/* ---------- the small print ----------
+   Arrives a beat after everything else and glows twice, because a
+   disclaimer nobody notices is not a disclaimer. Then it sits still. */
+.smallprint{
+  /* the tag sits above the text rather than beside it: at 400px a label in
+     its own column squeezed the sentence into a five line strip */
+  display:block;text-align:center;
+  width:100%;max-width:330px;margin:-8px auto 0;padding:9px 13px;
+  border:1px dashed rgba(227,167,47,.4);border-radius:11px;
+  background:rgba(227,167,47,.06);
+  font-size:11.5px;line-height:1.5;color:var(--cream-dim);
+  animation:spin-up .5s ease-out, spglow 1.5s ease-in-out .5s 2;
+}
+.sp-tag{
+  display:block;margin-bottom:3px;
+  font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--brass);font-weight:700;
+}
+@keyframes spin-up{
+  from{ opacity:0; transform:translateY(8px) }
+  to{ opacity:1; transform:none }
+}
+@keyframes spglow{
+  0%,100%{ border-color:rgba(227,167,47,.4); background:rgba(227,167,47,.06) }
+  50%{ border-color:rgba(227,167,47,.95); background:rgba(227,167,47,.16) }
+}
+@media (prefers-reduced-motion: reduce){
+  .smallprint{ animation:none }
+}
 
 /* ---------- lobby ---------- */
 .seat{
@@ -115,19 +152,10 @@ p{margin:0}
 @keyframes pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
 .curtain h2{font-family:var(--f-disp);font-size:27px;color:var(--brass)}
 
-/* ---------- table ---------- */
-.opponents{display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-bottom:14px}
-.opp{
-  border:1px solid var(--line-soft);border-radius:11px;padding:7px 8px;
-  display:flex;flex-direction:column;align-items:center;gap:4px;min-width:56px;
-  background:rgba(0,0,0,.18);
-}
-.opp.active{border-color:var(--brass);background:rgba(227,167,47,.1)}
-.opp .emo{font-size:20px;line-height:1}
-.opp .nm{font-size:10px;font-weight:600;letter-spacing:.02em;max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.opp .mini{display:flex;gap:2px}
-.mini i{width:8px;height:11px;border-radius:2px;background:var(--brass-deep);opacity:.75;display:block}
-
+/* ---------- table ----------
+   The flat strip of opponents that used to sit above the piles is gone:
+   everybody is on the round table now, so .opponents / .opp / .mini went
+   with it rather than being left behind as dead rules nobody dares delete. */
 .piles{display:flex;gap:14px;justify-content:center;align-items:flex-end;margin:6px 0 18px}
 .pile{display:flex;flex-direction:column;align-items:center;gap:6px}
 .pile .lbl{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cream-dim);opacity:.7}
@@ -140,14 +168,18 @@ p{margin:0}
   transition:transform .16s ease, box-shadow .16s ease;
   user-select:none;
 }
-.card.back{
+.card.back{background:transparent;overflow:hidden}
+.card.face{background:transparent;padding:0;overflow:hidden}
+.facewrap{position:absolute;inset:0;border-radius:inherit;overflow:hidden;
+  box-shadow:inset 0 0 0 1px rgba(21,24,30,.10)}
+.facewrap svg{display:block;width:100%;height:100%}
+.backart{position:absolute;inset:0;border-radius:inherit;
   background:
     repeating-linear-gradient(60deg, rgba(0,0,0,.16) 0 3px, transparent 3px 13px),
     repeating-linear-gradient(-60deg, rgba(0,0,0,.16) 0 3px, transparent 3px 13px),
-    linear-gradient(160deg, var(--brass) 0%, var(--brass-deep) 100%);
-  color:rgba(0,0,0,.42);font-size:23px;
-}
-.card.face{background:linear-gradient(168deg,#FBF6EA,#E7DCC6);color:var(--ink);font-size:31px}
+    linear-gradient(160deg, var(--brass) 0%, var(--brass-deep) 100%);}
+.backart::after{content:'\2b22';position:absolute;inset:0;display:grid;place-items:center;
+  font-size:22px;color:rgba(0,0,0,.42)}
 .card.empty{background:rgba(0,0,0,.2);border:1.5px dashed var(--line);box-shadow:none}
 .card.sel{transform:translateY(-11px);box-shadow:0 10px 0 var(--brass-deep), 0 16px 26px var(--shadow)}
 .card.sel .slot-n{color:var(--brass);opacity:.95}
@@ -160,7 +192,7 @@ p{margin:0}
   position:absolute;bottom:-21px;left:0;right:0;text-align:center;
   font-size:10px;letter-spacing:.1em;color:var(--cream-dim);opacity:.55;font-family:var(--f-ui);font-weight:600;
 }
-.hand{display:flex;gap:11px;justify-content:center;margin:8px 0 26px}
+.hand{display:flex;gap:11px;justify-content:center;margin:8px 0 14px}
 .you-hdr{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px}
 .you-hdr .emo{font-size:21px}
 .you-hdr .nm{font-family:var(--f-disp);font-size:15px;color:var(--brass)}
@@ -274,6 +306,305 @@ p{margin:0}
 .turnbar{display:flex;align-items:center;gap:8px;justify-content:center;font-size:13px;color:var(--cream-dim);margin-bottom:12px}
 .dot{width:7px;height:7px;border-radius:99px;background:var(--brass);display:inline-block}
 .wa{background:#25D366;color:#07301a;border-color:#1da851;font-weight:700}
+
+/* The No button, having surrendered. It keeps its own position on the
+   right so it does not jump when it changes sides; it just stops being a
+   No. The flash is one beat, enough to notice it gave up. */
+.no-btn.turned{
+  right:0;left:auto;
+  animation:gaveup .5s cubic-bezier(.2,1.4,.4,1);
+}
+@keyframes gaveup{
+  0%{transform:scale(.9) rotate(-4deg)}
+  60%{transform:scale(1.06) rotate(2deg)}
+  100%{transform:scale(1) rotate(0)}
+}
+
+/* ---------- the round table ----------
+   Everybody's four cards on one surface. The felt ring is the table; the
+   seats sit on its edge and the piles sit in the middle of it, which is
+   where they are in a real game and where your eye already expects them. */
+.roundtable{
+  position:relative;width:100%;height:258px;margin:2px 0 8px;
+}
+.felt-ring{
+  position:absolute;left:2%;right:2%;top:4%;bottom:0;
+  border-radius:50%/44%;
+  background:radial-gradient(60% 60% at 50% 40%, rgba(255,255,255,.045), rgba(0,0,0,.16));
+  border:1px solid var(--line-soft);
+  box-shadow:inset 0 2px 22px rgba(0,0,0,.3);
+}
+.seat-t{
+  position:absolute;transform:translate(-50%,-50%);
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:4px 5px;border-radius:10px;border:1px solid transparent;
+  transition:opacity .18s ease, border-color .18s ease, background .18s ease;
+}
+.seat-t .seat-who{display:flex;align-items:center;gap:4px;line-height:1}
+.seat-t .emo{font-size:16px}
+.seat-t .nm{
+  font-size:10px;font-weight:600;letter-spacing:.01em;
+  max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.seat-t .seat-cards{display:flex;gap:3px}
+.seat-t.here .emo{position:relative}
+.seat-t.here .emo::after{
+  content:'';position:absolute;right:-3px;bottom:0;width:5px;height:5px;
+  border-radius:99px;background:var(--mint);box-shadow:0 0 0 1.5px var(--felt);
+}
+.seat-t.cabo{border-color:rgba(209,75,50,.6);background:rgba(209,75,50,.12)}
+.cabo-tag{
+  font-size:8px;letter-spacing:.1em;font-weight:800;color:var(--chili);
+  border:1px solid rgba(209,75,50,.5);border-radius:4px;padding:0 3px;
+}
+.seat-t.dim{opacity:.4}
+
+/* a seat with a name on it and nobody behind it */
+/* somebody just sat down: their four land one after another */
+.seat-t.arriving .card{
+  animation:seatdeal .5s cubic-bezier(.2,1.25,.4,1) backwards;
+}
+.seat-t.arriving .nm{ animation:nameup .5s ease-out; }
+@keyframes seatdeal{
+  from{ transform:translateY(-16px) rotate(-8deg) scale(.8); opacity:0 }
+  to{ transform:none; opacity:1 }
+}
+@keyframes nameup{
+  from{ color:var(--cream-dim); opacity:.5 }
+  60%{ color:var(--mint); opacity:1 }
+  to{ color:inherit; opacity:1 }
+}
+
+.seat-t.empty{opacity:.55}
+.seat-t.empty .nm{color:var(--cream-dim);font-weight:500}
+.seat-t.empty .emo{filter:grayscale(1);opacity:.7}
+.ghost-card{
+  width:20px;height:28px;border-radius:4px;
+  border:1px dashed var(--line);background:rgba(0,0,0,.14);
+}
+.not-yet{
+  font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--cream-dim);opacity:.65;margin-top:1px;
+}
+.seat-t.pickable{cursor:pointer;border-color:rgba(227,167,47,.35)}
+.seat-t.pickable:hover{background:rgba(227,167,47,.1)}
+.seat-t.chosen{border-color:var(--brass);background:rgba(227,167,47,.18)}
+.table-piles{
+  position:absolute;left:0;right:0;bottom:0;
+  display:flex;gap:14px;justify-content:center;align-items:flex-end;
+}
+
+/* an opponent's card: small enough that four fit at a seat, big enough
+   that a thumb can hit one */
+.card.xs{
+  width:20px;height:28px;border-radius:4px;font-size:9px;
+  box-shadow:0 2px 0 rgba(0,0,0,.3);
+}
+.card.xs .slot-n{display:none}
+
+/* what you are being asked to tap */
+.card.targetable{
+  cursor:pointer;
+  outline:2px solid var(--brass);outline-offset:2px;
+  animation:aimpulse 1.5s ease-in-out infinite;
+}
+@keyframes aimpulse{
+  0%,100%{outline-color:rgba(227,167,47,.45)}
+  50%{outline-color:rgba(227,167,47,1)}
+}
+.roundtable.aiming .pile{opacity:.35}
+.aiming-bar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
+  border:1px solid rgba(227,167,47,.45);background:rgba(227,167,47,.1);
+  border-radius:12px;padding:9px 12px;margin:2px 0 12px;font-size:13.5px;
+}
+@media(max-width:380px){
+  .roundtable{height:250px}
+  .seat-t .nm{max-width:52px;font-size:9px}
+  .card.xs, .ghost-card{width:18px;height:25px}
+}
+
+/* ---------- who is here ----------
+   A quiet green edge on somebody who has the game open right now. It has
+   to be quiet: this is not a chat app, and a table of five glowing boxes
+   would compete with the cards. */
+.here-now{
+  font-size:11px;letter-spacing:.05em;color:var(--mint);
+  margin-top:3px;font-weight:600;
+}
+.here-now.dim{color:var(--cream-dim);opacity:.7;font-weight:500}
+
+/* the card you just drew, sitting above your own four rather than out in
+   the middle with the piles */
+.drawn-row{
+  display:flex;justify-content:center;margin:2px 0 10px;
+}
+.drawn-row .card{
+  animation:drawnin .34s cubic-bezier(.2,1.3,.4,1);
+  box-shadow:0 6px 0 rgba(0,0,0,.32), 0 12px 24px var(--shadow),
+             0 0 0 2px rgba(227,167,47,.45);
+}
+.drawn-row .lbl{
+  font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--brass);opacity:.9;
+}
+@keyframes drawnin{
+  from{transform:translateY(-22px) scale(.92);opacity:0}
+  to{transform:none;opacity:1}
+}
+
+/* ---------- your own notes ----------
+   Under your own cards, never anybody else's. Faint until written in, so
+   four empty ones do not shout at you every turn. */
+.handslot{display:flex;flex-direction:column;align-items:center;gap:5px}
+/* the slot number used to live under the card. The note lives there now,
+   so the number moves onto the card back where it is still readable and
+   no longer sits underneath a note. */
+/* The slot number moved onto the card back when the note took the space
+   below it, and at .42 on a patterned back it was invisible. It is the
+   one label you actually navigate by, so it gets a dark disc behind it. */
+.handslot .slot-n{
+  bottom:auto;top:6px;opacity:1;
+  color:var(--cream);font-size:9.5px;line-height:15px;
+  width:15px;height:15px;margin:0 auto;border-radius:99px;
+  background:rgba(12,32,28,.55);
+}
+.note{
+  border:1px dashed var(--line);background:transparent;color:var(--cream-dim);
+  border-radius:7px;padding:2px 7px;font-size:11px;line-height:1.5;
+  min-width:34px;max-width:78px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;opacity:.45;cursor:pointer;font-family:inherit;
+}
+.note:hover{opacity:.9;border-color:var(--brass)}
+.note.has{
+  opacity:1;border-style:solid;border-color:rgba(227,167,47,.5);
+  color:var(--brass);font-weight:600;
+}
+.note-in{
+  width:78px;border:1px solid var(--brass);border-radius:7px;
+  background:rgba(0,0,0,.25);color:var(--cream);
+  font-size:11px;padding:2px 6px;text-align:center;font-family:inherit;
+}
+.note-in:focus{outline:none;box-shadow:0 0 0 2px rgba(227,167,47,.25)}
+
+/* ---------- catching up ----------
+   A caption, so a table rearranging itself on open reads as a replay and
+   not as a glitch. */
+.catchup{
+  text-align:center;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--brass);opacity:.85;padding:6px 0;
+  animation:catchfade 1.4s ease-out;
+}
+@keyframes catchfade{0%{opacity:0}20%{opacity:.85}100%{opacity:.85}}
+
+/* ---------- seat recovery ----------
+   The ask sits beside the seat rather than inside it, so a mis-tap takes
+   the seat and never the recovery. The banner on everybody else's screen
+   is amber rather than red: somebody wanting back into their own seat is
+   normal, not an alarm. */
+.seatrow{display:flex;gap:8px;align-items:stretch}
+.seatrow .seat{flex:1;min-width:0}
+.mine-btn{
+  flex:none;align-self:stretch;white-space:nowrap;
+  border-color:var(--line);color:var(--cream-dim);font-size:12.5px;padding:0 11px;
+}
+.mine-btn:hover{color:var(--brass);border-color:rgba(227,167,47,.5)}
+.seatasks{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.seatask{
+  display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  border:1px solid rgba(227,167,47,.45);border-radius:12px;
+  background:rgba(227,167,47,.08);padding:10px 12px;font-size:13.5px;
+}
+.seatask .row{flex:none}
+
+/* ---------- the turn clock ----------
+   How long somebody has been sitting on it. Quiet under a day, and then
+   it stops being quiet. The nudge button gets a pulse rather than a
+   colour change, because the colour already means WhatsApp. */
+.held{
+  font-size:11px;letter-spacing:.04em;color:var(--cream-dim);opacity:.7;
+  margin-top:3px;
+}
+.held.late{
+  color:var(--chili);opacity:1;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;font-size:10.5px;
+}
+.btn.wa.loud{
+  box-shadow:0 0 0 0 rgba(37,211,102,.55);
+  animation:waloud 1.9s ease-out infinite;
+}
+@keyframes waloud{
+  0%{box-shadow:0 0 0 0 rgba(37,211,102,.5)}
+  70%{box-shadow:0 0 0 12px rgba(37,211,102,0)}
+  100%{box-shadow:0 0 0 0 rgba(37,211,102,0)}
+}
+/* skipping somebody is destructive and social. Outlined, not solid: it
+   should look available, not inviting. */
+.btn.ghost.danger{
+  background:transparent;border-color:rgba(209,75,50,.55);color:var(--chili);
+  font-weight:600;
+}
+.btn.ghost.danger:hover{background:rgba(209,75,50,.1)}
+
 .spin{width:26px;height:26px;border-radius:99px;border:2.5px solid var(--line);border-top-color:var(--brass);animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+
+/* ---------- real cards: motion ---------- */
+
+/* The flip is the one animation that IS the game. A real Y-axis rotation
+   with the face swapped at the midpoint, so it reads as a card turning
+   over rather than a crossfade. */
+@keyframes cardflip{
+  0%   { transform: rotateY(0deg)   scale(1);    }
+  50%  { transform: rotateY(90deg)  scale(1.06); }
+  100% { transform: rotateY(0deg)   scale(1);    }
+}
+.card.flipping{ animation: cardflip .46s cubic-bezier(.4,0,.2,1); }
+.card{ transform-style: preserve-3d; will-change: transform; }
+
+/* FLIP moves: the element is transformed to where it used to be, then
+   released. Everything is cosmetic — the server already decided. */
+.card.moving{ transition: transform .42s cubic-bezier(.22,.68,.3,1); z-index:20; }
+
+@keyframes dealin{
+  from{ transform: translate(var(--dx,0), var(--dy,-140px)) rotate(var(--dr,-14deg)) scale(.86); opacity:0 }
+  to  { transform:none; opacity:1 }
+}
+.card.dealing{ animation: dealin .5s cubic-bezier(.2,.9,.3,1) backwards;
+               animation-delay: var(--delay, 0ms); }
+
+@keyframes settle{ 0%{transform:translateY(-6px) rotate(-2deg)} 60%{transform:translateY(1px) rotate(1deg)} 100%{transform:none} }
+.card.settling{ animation: settle .28s ease-out; }
+
+/* Sweep: the pile scatters off the table. The biggest animation in the
+   game, for the move that gains you the least — which is the joke. */
+@keyframes scatter{
+  to{ transform: translate(var(--sx), var(--sy)) rotate(var(--sr)) scale(.7); opacity:0 }
+}
+.sweeping .card{ animation: scatter .62s cubic-bezier(.3,.1,.7,.9) forwards; }
+
+@keyframes pulsetable{ 0%{box-shadow:inset 0 0 0 0 rgba(227,167,47,0)}
+  35%{box-shadow:inset 0 0 90px 6px rgba(227,167,47,.30)}
+  100%{box-shadow:inset 0 0 0 0 rgba(227,167,47,0)} }
+.shell.cabo{ animation: pulsetable 1s ease-out; }
+
+/* a red card gets the faintest warm lift, so colour reads at a glance */
+.card.face.red .facewrap{ box-shadow: inset 0 0 0 1px rgba(200,16,46,.18); }
+
+@media (prefers-reduced-motion: reduce){
+  .card.flipping,.card.dealing,.card.settling,.sweeping .card,.shell.cabo{ animation:none!important }
+  .card.moving{ transition:none!important }
+}
+
+
+/* ---------- rule book ---------- */
+.rulebox{border:1px solid var(--line-soft);border-radius:13px;background:rgba(0,0,0,.18);
+  padding:4px 14px;margin:8px 0 20px}
+.rule{display:grid;grid-template-columns:74px 1fr;gap:12px;padding:11px 0;
+  border-bottom:1px solid var(--line-soft);align-items:baseline}
+.rule:last-child{border-bottom:none}
+.rule-k{font-family:var(--f-num);font-weight:700;font-size:15px;color:var(--brass);line-height:1.25}
+.rule-b{font-size:14px;line-height:1.5;color:var(--cream-dim)}
+.rule-b b{color:var(--cream);font-weight:600}

@@ -2,8 +2,12 @@
  * Checks the whole loop AND what actually arrives over each wire. */
 const { chromium } = require('playwright');
 
+/* Boots its own server so `npm run test:browser` needs nothing running. */
+process.env.PORT = process.env.PORT || '3310';
+require('../server.js');
+
 (async () => {
-  const base = 'http://localhost:3210';
+  const base = 'http://localhost:' + process.env.PORT;
   const b = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium', args:['--no-sandbox'] });
   async function phone(){
     const ctx = await b.newContext({ viewport:{width:400,height:880}, deviceScaleFactor:2 });
@@ -32,9 +36,11 @@ const { chromium } = require('playwright');
   // phone 0 creates the room
   await P[0].goto(base + '/');
   await P[0].waitForSelector('.title');
-  await P[0].click('text=Start a new house');
-  await P[0].waitForSelector('.codebox', { timeout:10000 });
-  const code = (await P[0].textContent('.codebox')).trim();
+  // the Yes button is the one that works. The No button runs away, which is
+  // why this clicks by class and not by text.
+  await P[0].click('.yes-btn');
+  await P[0].waitForSelector('.seat', { timeout:15000 });
+  const code = P[0].url().split('/g/')[1].trim();
   console.log('room:', code);
   await P[0].screenshot({ path:'/home/claude/q1-seats.png' });
 
@@ -52,20 +58,42 @@ const { chromium } = require('playwright');
   await P[0].reload(); await P[0].waitForTimeout(800);
   const peekVisible = (await P[0].$('.hand .card')) !== null;
   console.log('all five claimed -> peek phase reached:', peekVisible);
-  await P[0].screenshot({ path:'/home/claude/q3-peek.png' });
+  await P[0].screenshot({ path:'/home/claude/r3-peek.png' });
 
   // everyone peeks
   for (const p of P){
-    await p.reload(); await p.waitForTimeout(500);
-    const cs = await p.$$('.hand .card');
-    if (cs.length >= 2){
-      await cs[0].click(); await cs[1].click();
+    await p.reload();
+    // the hand deals itself in with a stagger, so wait for the cards to
+    // stop moving rather than clicking a handle mid-flight
+    await p.waitForSelector('.hand .card', { timeout:10000 }).catch(()=>{});
+    await p.waitForTimeout(1200);
+    const n = (await p.$$('.hand .card')).length;
+    if (n >= 2){
+      await p.click('.hand .card >> nth=0');
+      await p.waitForTimeout(250);
+      await p.click('.hand .card >> nth=1');
+      await p.waitForTimeout(250);
       const go = await p.$('text=Look at these two');
       if (go) await go.click();
-      await p.waitForTimeout(700);
+      await p.waitForTimeout(900);
     }
   }
-  await P[0].screenshot({ path:'/home/claude/q4-reveal.png' });
+
+  /* Looking no longer starts the round: everybody has to say they are done
+     looking, which is what lets you stare at your two for as long as you
+     want without the last person to arrive getting a single glance. */
+  for (const p of P){
+    const got = await p.$('text=Got it'); if (got){ await got.click(); await p.waitForTimeout(250); }
+    const again = await p.$('text=Look at them again');
+    if (again){  // prove a second look is offered, then take it and move on
+      await again.click(); await p.waitForTimeout(900);
+      const g2 = await p.$('text=Got it'); if (g2){ await g2.click(); await p.waitForTimeout(250); }
+    }
+    const ready = await p.$('text=I have got them');
+    if (ready){ await ready.click(); await p.waitForTimeout(600); }
+  }
+  for (const p of P){ await p.reload(); await p.waitForTimeout(500); }
+  await P[0].screenshot({ path:'/home/claude/r4-reveal.png' });
   for (const p of P){ const g = await p.$('text=Got it'); if (g) await g.click(); await p.waitForTimeout(250); }
 
   // who is up?
@@ -74,7 +102,7 @@ const { chromium } = require('playwright');
     if (await P[i].$('.act')) activeIdx = i; }
   console.log('phone with the turn:', activeIdx);
   const idleIdx = (activeIdx + 1) % 5;
-  await P[activeIdx].screenshot({ path:'/home/claude/q5-board.png' });
+  await P[activeIdx].screenshot({ path:'/home/claude/r5-board.png' });
   await P[idleIdx].screenshot({ path:'/home/claude/q6-wait.png' });
   console.log('idle phone has action buttons:', (await P[idleIdx].$('.act')) !== null, '(want false)');
   console.log('idle phone has a nudge button:', (await P[idleIdx].$('.btn.wa')) !== null, '(want true)');
@@ -83,13 +111,13 @@ const { chromium } = require('playwright');
   // take a turn
   await P[activeIdx].click('.act.gold');
   await P[activeIdx].waitForTimeout(600);
-  await P[activeIdx].screenshot({ path:'/home/claude/q7-drawn.png' });
+  await P[activeIdx].screenshot({ path:'/home/claude/r7-drawn.png' });
   const away = await P[activeIdx].$('.act.gold.wide');
   if (away){ await away.click(); await P[activeIdx].waitForTimeout(900); }
   let got = await P[activeIdx].$('text=Got it'); if (got){ await got.click(); await P[activeIdx].waitForTimeout(400); }
   const endB = await P[activeIdx].$('text=End turn');
   if (endB){ await endB.click(); await P[activeIdx].waitForTimeout(900); }
-  await P[activeIdx].screenshot({ path:'/home/claude/q8-handoff.png' });
+  await P[activeIdx].screenshot({ path:'/home/claude/r8-handoff.png' });
   console.log('WhatsApp handoff shown after ending turn:', (await P[activeIdx].$('.btn.wa')) !== null);
 
   // ---- the wire check, across every phone
@@ -100,9 +128,13 @@ const { chromium } = require('playwright');
       if (n == null) return;
       if (Array.isArray(n)) return n.forEach((x,i)=>walk(x, path+'['+i+']'));
       if (typeof n !== 'object') return;
-      if (typeof n.v === 'number' && typeof n.id === 'string' && /^c\d+$/.test(n.id)){
-        if (!/discardTop|drawn|\.reveal|reveal_all|\.cards/.test(path))
-          leaks.push('phone'+r.phone+' '+r.url+' '+path+' = '+n.v);
+      if (typeof n.id === 'string' && /^c\d+$/.test(n.id)){
+        const tells = [];
+        if (typeof n.v === 'number') tells.push('v='+n.v);
+        if (typeof n.r === 'string') tells.push('rank='+n.r);
+        if (typeof n.s === 'string') tells.push('suit='+n.s);
+        if (tells.length && !/discardTop|drawn|\.reveal|reveal_all|\.cards/.test(path))
+          leaks.push('phone'+r.phone+' '+r.url+' '+path+' '+tells.join(','));
       }
       Object.keys(n).forEach(k => walk(n[k], path+'.'+k));
     })(d, 'body');

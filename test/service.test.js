@@ -1,6 +1,21 @@
 /* End-to-end through the service layer: five players, real rooms, real
  * tokens, a whole match. Runs against both storage backends.
  */
+/* Seeded, on purpose. The shuffle and this driver both used Math.random, so
+   the match played was different every run and one assertion (that a power
+   card got drawn and revealed at least once) failed about one run in four.
+   A test that passes most of the time is worse than no test: it trains you
+   to re-run it. Fixing the seed makes the whole match reproducible, and the
+   randomised coverage stays where it belongs, in engine.fuzz.js. */
+(function seed(n){
+  Math.random = function(){
+    n |= 0; n = (n + 0x6D2B79F5) | 0;
+    var t = Math.imul(n ^ (n >>> 15), 1 | n);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+})(20260904);
+
 const { makeDb } = require('../lib/db.js');
 const { makeService } = require('../lib/service.js');
 const Engine = require('../lib/engine.js');
@@ -19,7 +34,7 @@ async function run(db, label){
 
   // --- create a room
   const room = await S.createRoom({ players: [
-    { animal:'bee',     name:'Hrithik', phone:'+919000000001' },
+    { animal:'bee',     name:'Hrutik', phone:'+919000000001' },
     { animal:'deer',    name:'Sharayu', phone:'+12120000002' },
     { animal:'snake',   name:'Shivani', phone:'+919000000003' },
     { animal:'rhino',   name:'Sahil',   phone:'+919000000004' },
@@ -53,10 +68,19 @@ async function run(db, label){
   for (let i=0;i<5;i++) peeks.push(await S.peek(room.code, tok[i], [0,1]));
   ok(peeks[0].reveal.cards.length === 2, 'peek returns two values');
   ok(peeks[0].reveal.cards.every(c => typeof c.v === 'number'), 'peeked values present in the reveal');
-  ok(peeks[4].waitingFor === 0, 'waitingFor counts down to zero');
+
+  /* Looking no longer starts the round: you may look as often as you like
+     until you say you are done, which is what stops the last person to
+     arrive getting one glance while everybody else studied theirs. */
+  st = await S.getState(room.code, tok[0]);
+  ok(st.phase === 'peek', 'looking alone does not start the round');
+  for (let i=0;i<4;i++) await S.ready(room.code, tok[i]);
+  st = await S.getState(room.code, tok[0]);
+  ok(st.phase === 'peek', 'four of five ready is not enough');
+  await S.ready(room.code, tok[4]);
 
   st = await S.getState(room.code, tok[0]);
-  ok(st.phase === 'turn', 'all five peeked in parallel -> straight to play, no curtain');
+  ok(st.phase === 'turn', 'the last one ready deals, no curtain');
   // the memory rule
   ok(!JSON.stringify(st).match(/"v":\d+.*"slot"/) || true, 'sanity');
   ok(st.you.hand.every(c => !('v' in c)), 'a refresh does NOT re-show your peeked cards');
@@ -84,7 +108,10 @@ async function run(db, label){
     if (view.phase === 'matchEnd') break;
     if (view.phase === 'roundEnd'){ await S.nextRound(room.code, tok[0]); continue; }
     if (view.phase === 'peek'){
-      for (let i=0;i<5;i++){ try { await S.peek(room.code, tok[i], [0,1]); } catch(e){} }
+      for (let i=0;i<5;i++){
+        try { await S.peek(room.code, tok[i], [0,1]); } catch(e){}
+        try { await S.ready(room.code, tok[i]); } catch(e){}
+      }
       continue;
     }
     if (view.phase !== 'turn') break;

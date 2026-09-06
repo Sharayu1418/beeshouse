@@ -20,18 +20,22 @@ function checkAllSeats(s){
     try { R.assertNoLeak(view, s, seat); }
     catch (e) { leaks++; if (sampled.length < 3) sampled.push(e.message); }
 
-    // 2. your OWN hand must come back valueless — the app must not remember for you
+    // 2. your OWN hand must give nothing away — not value, not rank, not suit
     if (view.you && s.phase !== 'roundEnd' && s.phase !== 'matchEnd'){
       for (const c of view.you.hand){
-        if ('v' in c) { ownValueLeaks++; if (sampled.length<3) sampled.push('own hand carried a value: '+JSON.stringify(c)); }
+        for (const k of ['v','r','s']){
+          if (k in c) { ownValueLeaks++; if (sampled.length<3) sampled.push('own hand carried "'+k+'": '+JSON.stringify(c)); }
+        }
       }
     }
 
-    // 3. every other player's slots must be valueless too
+    // 3. same for every other player's slots
     for (const p of view.players){
       if (s.phase === 'roundEnd' || s.phase === 'matchEnd') break;
       for (const c of (p.slots||[])){
-        if ('v' in c) { leaks++; if (sampled.length<3) sampled.push('opponent slot carried a value'); }
+        for (const k of ['v','r','s']){
+          if (k in c) { leaks++; if (sampled.length<3) sampled.push('opponent slot carried "'+k+'"'); }
+        }
       }
     }
 
@@ -39,15 +43,14 @@ function checkAllSeats(s){
     //    fresh GET of the same state must never contain that value.
     const rev = R.revealFor(s, seat);
     if (rev && (rev.kind === 'card' || rev.kind === 'cards')){
-      const values = rev.kind === 'card' ? [rev.v] : rev.cards.map(c=>c.v);
-      const ids    = rev.kind === 'card' ? [rev.id] : rev.cards.map(c=>c.id);
+      const cards = rev.kind === 'card' ? [rev.card] : rev.cards;
       const json = JSON.stringify(view);
-      ids.forEach((id,i) => {
-        // the id may legitimately appear (it's a position on the table);
-        // the VALUE paired with it must not.
-        if (json.includes('"id":"'+id+'","v":'+values[i])) {
+      cards.filter(Boolean).forEach(c => {
+        // the id may legitimately appear (it is a position on the table);
+        // the rank/suit/value paired with it must not.
+        if (json.includes('"id":"'+c.id+'","r":') || json.includes('"id":"'+c.id+'","v":')) {
           revealLeaks++;
-          if (sampled.length<3) sampled.push('reveal '+id+'='+values[i]+' survived into GET /state');
+          if (sampled.length<3) sampled.push('reveal '+c.id+' ('+c.r+c.s+') survived into GET /state');
         }
       });
     }

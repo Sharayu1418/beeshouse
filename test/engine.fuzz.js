@@ -61,16 +61,38 @@ function drive(s, rng){
 
     // invariants, every single step
     for (const p of s.players){
-      if (p.hand.some(c => c==null))              throw new Error('null card in '+p.name+"'s hand");
-      if (p.hand.some(c => typeof c.v!=='number')) throw new Error('non-numeric card value');
-      if (p.hand.some(c => c.v<0 || c.v>13))       throw new Error('card value out of range: '+p.hand.map(c=>c.v));
+      if (p.hand.some(c => c==null))               throw new Error('null card in '+p.name+"'s hand");
+      if (p.hand.some(c => typeof c.r!=='string')) throw new Error('card with no rank');
+      if (p.hand.some(c => !E.SUITS.includes(c.s))) throw new Error('card with a bad suit');
+      if (p.hand.some(c => 'v' in c))              throw new Error('a card is carrying a stored value — it must be computed');
+      const vs = p.hand.map(c => E.valueOf(c));
+      if (vs.some(v => v < -1 || v > 13))          throw new Error('value out of range: '+vs);
     }
     if (s.discard.some(c=>c==null)) throw new Error('null in discard');
     if (s.deck.some(c=>c==null))    throw new Error('null in deck');
-    const all = [...s.deck, ...s.discard, ...s.players.flatMap(p=>p.hand)].map(c=>c.id);
-    if (new Set(all).size !== all.length) throw new Error('duplicate card id in play');
+    const inPlay = [...s.deck, ...s.discard, ...s.players.flatMap(p=>p.hand)];
+    const ids = inPlay.map(c=>c.id);
+    if (new Set(ids).size !== ids.length) throw new Error('duplicate card id in play');
+    const faces = inPlay.filter(c=>/^c\d+$/.test(c.id)).map(c=>c.r+c.s);
+    if (new Set(faces).size !== faces.length) throw new Error('the same card exists twice: '+faces.length+' vs '+new Set(faces).size);
   }
   return { s, steps };
+}
+
+// deck composition, before anything else
+{
+  const d = E.makeDeck();
+  const problems = [];
+  if (d.length !== 52) problems.push('deck is ' + d.length + ' cards, expected 52');
+  if (new Set(d.map(c=>c.r+c.s)).size !== 52) problems.push('deck has duplicate cards');
+  const reds = d.filter(c=>c.r==='K' && E.isRed(c));
+  if (reds.length !== 2) problems.push('expected exactly 2 red kings, found ' + reds.length);
+  if (reds.some(c=>E.valueOf(c) !== -1)) problems.push('a red king is not worth -1');
+  const blacks = d.filter(c=>c.r==='K' && !E.isRed(c));
+  if (blacks.some(c=>E.valueOf(c) !== 13)) problems.push('a black king is not worth 13');
+  if (d.filter(c=>E.powerOf(c.r)).length !== 24) problems.push('expected 24 power cards');
+  if (problems.length){ console.error('DECK FAILURES:\n  ' + problems.join('\n  ')); process.exit(1); }
+  console.log('deck: 52 cards, 2 red kings at -1, 2 black kings at 13, 24 power cards');
 }
 
 let ok=0, crashed=0, stalled=0, settlementErrors=0, flips=0;

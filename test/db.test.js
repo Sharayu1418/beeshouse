@@ -20,7 +20,7 @@ async function suite(db, label){
 
   // players
   await db.addPlayers(g.id, [
-    { animal:'bee',     name:'Hrithik', seat:0, phone:'+919000000001' },
+    { animal:'bee',     name:'Hrutik', seat:0, phone:'+919000000001' },
     { animal:'deer',    name:'Sharayu', seat:1, phone:'+12120000002' },
     { animal:'snake',   name:'Shivani', seat:2, phone:'+919000000003' },
     { animal:'rhino',   name:'Sahil',   seat:3, phone:'+919000000004' },
@@ -67,11 +67,11 @@ async function suite(db, label){
   // moves are append-only and ordered
   await db.appendMoves([
     { game_id:g.id, round_n:1, seat:0, type:'SWEEP', payload:{},
-      public_text:'Hrithik swept the floor.', actor_id:'bee', victim_ids:['deer','snake'] },
+      public_text:'Hrutik swept the floor.', actor_id:'bee', victim_ids:['deer','snake'] },
     { game_id:g.id, round_n:1, seat:1, type:'DRAW', payload:{},
       public_text:null, actor_id:'deer', victim_ids:[] },
     { game_id:g.id, round_n:1, seat:0, type:'CABO', payload:{},
-      public_text:'Hrithik called Cabo.', actor_id:'bee', victim_ids:['deer','snake'] }
+      public_text:'Hrutik called Cabo.', actor_id:'bee', victim_ids:['deer','snake'] }
   ]);
   const ms = await db.listMoves(g.id);
   ok(ms.length === 3, 'three moves stored');
@@ -81,6 +81,25 @@ async function suite(db, label){
   ok(since.length === 2, 'sinceId filters correctly (this is what the briefing uses)');
   const lastForBee = await db.lastMoveIdForSeat(g.id, 0);
   ok(lastForBee === ms[2].id, 'last move id for a seat is right');
+
+  /* Timestamps. The turn clock is arithmetic on created_at, so both
+     adapters have to agree about it: default to now when it is not given,
+     and honour it exactly when it is. Postgres used to silently drop a
+     supplied one, which made the clock impossible to test against a real
+     database. */
+  ok(ms.every(m => m.created_at && !isNaN(new Date(m.created_at).getTime())),
+     'every move carries a readable timestamp');
+  const fresh = Date.now() - new Date(ms[0].created_at).getTime();
+  ok(fresh >= 0 && fresh < 60000, 'a move with no timestamp given is stamped now');
+
+  const backdated = new Date(Date.now() - 30 * 3600000).toISOString();
+  await db.appendMoves([{ game_id:g.id, round_n:1, seat:2, type:'DRAW', payload:{},
+    public_text:null, actor_id:'snake', victim_ids:[], created_at: backdated }]);
+  const withOld = await db.listMoves(g.id);
+  const old = withOld[withOld.length - 1];
+  const drift = Math.abs(new Date(old.created_at).getTime() - Date.parse(backdated));
+  ok(drift < 1000, 'a supplied timestamp is stored as given, not overwritten with now (' +
+     Math.round(drift) + 'ms off)');
 
   await db.close();
 }

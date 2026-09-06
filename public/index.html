@@ -8,14 +8,18 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=20260906-0256">
 </head>
 <body>
 <div id="app"></div>
+<div id="svgdefs" aria-hidden="true"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js"></script>
+<script src="/engine.js?v=20260906-0256"></script>
+<script src="/cards.js?v=20260906-0256"></script>
+<script src="/anim.js?v=20260906-0256"></script>
+<script src="/voices.js?v=20260906-0256"></script>
 <script>
 (function () {
 'use strict';
@@ -28,6 +32,11 @@
    than merely discouraged.
    ============================================================ */
 
+/* Which build you are actually looking at. Shown at the foot of the rule
+   book and put on window, because "have I really got the new one" was
+   guesswork for an afternoon and it should be a five second answer. */
+var BUILD = '20260906-0256';
+try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
 function E(t){ return function(p){ var c=[].slice.call(arguments,1); return h.apply(null,[t,p].concat(c)); }; }
@@ -45,6 +54,31 @@ var Store = {
   clear: function(code){ try { localStorage.removeItem(this.key(code)); } catch(e){} }
 };
 
+/* ---------------------------------------------------- your own notes
+
+   The house never remembers a card for you, and it still does not: none of
+   this is ever sent anywhere. It lives in this browser and nowhere else,
+   which is the same arrangement as a piece of paper next to a real table.
+   Everyone is allowed one. Nobody can read anybody else's.
+
+   Keyed by round, because a new round is a new hand and last round's notes
+   would be confident nonsense. Not keyed by anything else: if somebody
+   swaps your slot 3 out from under you, your note about slot 3 is now a
+   lie, and that is correct. */
+var Notes = {
+  key: function(code, round){ return 'beeshouse:notes:' + code + ':' + round; },
+  all: function(code, round){
+    try { return JSON.parse(localStorage.getItem(this.key(code, round)) || '{}'); }
+    catch(e){ return {}; }
+  },
+  set: function(code, round, slot, text){
+    var m = this.all(code, round);
+    if (text) m[slot] = String(text).slice(0, 16); else delete m[slot];
+    try { localStorage.setItem(this.key(code, round), JSON.stringify(m)); } catch(e){}
+    return m;
+  }
+};
+
 /* ---------------------------------------------------- network */
 async function api(path, opts){
   var res = await fetch(path, Object.assign({ headers:{'content-type':'application/json'} }, opts||{}));
@@ -57,9 +91,14 @@ var API = {
   roomInfo:   function(code){ return api('/api/room?code='+encodeURIComponent(code)); },
   claim:      function(code, seat){ return api('/api/claim', { method:'POST', body: JSON.stringify({code:code, seat:seat}) }); },
   peek:       function(code, token, indices){ return api('/api/peek', { method:'POST', body: JSON.stringify({code:code, token:token, indices:indices}) }); },
+  ready:      function(code, token){ return api('/api/ready', { method:'POST', body: JSON.stringify({code:code, token:token}) }); },
   state:      function(code, token){ return api('/api/state?code='+encodeURIComponent(code)+'&token='+encodeURIComponent(token)); },
   move:       function(code, token, move, v){ return api('/api/move', { method:'POST', body: JSON.stringify({code:code, token:token, move:move, expectedVersion:v}) }); },
-  nextRound:  function(code, token){ return api('/api/next-round', { method:'POST', body: JSON.stringify({code:code, token:token}) }); }
+  nextRound:  function(code, token){ return api('/api/next-round', { method:'POST', body: JSON.stringify({code:code, token:token}) }); },
+  recap:      function(code, token){ return api('/api/recap?code='+encodeURIComponent(code)+'&token='+encodeURIComponent(token)); },
+  skip:       function(code, token){ return api('/api/skip', { method:'POST', body: JSON.stringify({code:code, token:token}) }); },
+  seatRequest:function(code, seat){ return api('/api/seat-request', { method:'POST', body: JSON.stringify({code:code, seat:seat}) }); },
+  seatDecide: function(code, token, requestId, approve){ return api('/api/seat-decide', { method:'POST', body: JSON.stringify({code:code, token:token, requestId:requestId, approve:approve}) }); }
 };
 
 /* ---------------------------------------------------- audio (unchanged from Phase 0) */
@@ -115,17 +154,45 @@ var Audio_ = (function(){
 
 var REVEAL_MS = 3400;
 
+/* The Feast. Slapping more than one card at a time is a bigger gamble and
+   pays a bigger dish, these names come straight from the engine's DISH. */
+var DISHES = {
+  2: { n:'Vada Pav', emo:'🍔', b:'Two at once. A free peek at one of your own.' },
+  3: { n:'Misal',    emo:'🍛', b:'Three at once. Force one player to show a card to the table.' },
+  4: { n:'Thali',    emo:'🍽️', b:'All four. Nothing left to score.', bonus:'Minus three on this round.' }
+};
+
 /* ---------------------------------------------------- pieces */
+/* `card` is {r,s} when the face should be shown, absent when it shouldn't.
+   The face is real SVG so it stays crisp at every size the layout uses. */
 function Card(props){
-  var cls = 'card ' + (props.face ? 'face' : props.empty ? 'empty' : 'back');
+  var showFace = !!(props.card && props.card.r);
+  var cls = 'card ' + (showFace ? 'face' : props.empty ? 'empty' : 'back');
   if (props.size) cls += ' ' + props.size;
   if (props.sel) cls += ' sel';
+  if (props.targetable) cls += ' targetable';
   if (props.onClick) cls += ' tap';
-  return div({ className:cls, onClick:props.onClick, role:props.onClick?'button':null,
+  if (showFace && Cards.isRed(props.card)) cls += ' red';
+
+  /* data-card is what the FLIP animation tracks. A face-down card still
+     needs it, or a card moving into or out of a hand cannot be glided, and
+     the id alone says nothing: it is already in every view by design. */
+  return div({ className:cls, style:props.style || null,
+               'data-card': (props.card && props.card.id) || props.id || null,
+               onClick:props.onClick, role:props.onClick?'button':null,
                tabIndex:props.onClick?0:null,
+               'aria-label': showFace ? Cards.label(props.card) : 'face down card',
                onKeyDown:props.onClick?function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); props.onClick(); } }:null },
-    props.face ? String(props.v) : props.empty ? '' : '⬢',
+    showFace
+      ? div({ className:'facewrap', dangerouslySetInnerHTML:{ __html: Cards.face(props.card) } })
+      : props.empty ? null : div({className:'backart'}),
     props.slot!=null ? div({className:'slot-n'}, props.slot) : null);
+}
+
+/* Pretty name for a card in running text: "K♥". */
+function cardText(c){
+  if (!c || !c.r) return ' ';
+  return c.r + ({S:'\u2660',H:'\u2665',D:'\u2666',C:'\u2663'})[c.s];
 }
 
 function TopBar(props){
@@ -133,8 +200,13 @@ function TopBar(props){
   return div({className:'topbar'},
     span({className:'logo'}, '🐝 ', span({className:'long'}, 'THE BEE’S '), 'HOUSE'),
     div({style:{flex:1}}),
-    props.code ? span({className:'chip'}, props.code) : null,
-    props.round ? span({className:'chip'}, 'R'+props.round+'/'+props.rounds) : null,
+    (props.code || props.round)
+      ? span({className:'chip'},
+          props.code || '',
+          props.code && props.round ? span({style:{opacity:.45}}, ' · ') : null,
+          props.round ? ('R'+props.round+'/'+props.rounds) : '')
+      : null,
+    props.onRules ? btn({className:'icon-btn', 'aria-label':'How this works', onClick:props.onRules}, '📖') : null,
     props.onTab ? btn({className:'icon-btn', 'aria-label':'The Tab', onClick:props.onTab}, '📒') : null,
     btn({className:'icon-btn', 'aria-label':'Sound', onClick:function(){ setMuted(Audio_.toggle()); }}, muted?'🔇':'🔊'));
 }
@@ -147,26 +219,34 @@ function Briefing(props){
   return div({className:'brief'},
     H4({}, 'What you did last time'),
     did.length ? ul({}, did.map(function(t,i){ return li({key:i}, t); }))
-               : P({className:'none'}, 'Nothing yet — this is your first move.'),
+               : P({className:'none'}, 'Nothing yet. This is your first move.'),
     H4({}, 'Since then'),
     since.length ? ul({}, since.map(function(t,i){ return li({key:i}, t); }))
                  : P({className:'none'}, 'Nothing. Suspiciously quiet.'),
     b.worstOffender
       ? P({className:'warn'}, 'That’s now ' + b.worstOffender.count + ' things ' + b.worstOffender.name + ' has done to you.')
       : null,
-    P({className:'hint', style:{textAlign:'left', marginTop:'10px'}},
-      'What you saw is not in here. That part is still your job.'));
+    null);
 }
 
 function Overlay(props){ return div({className:'ovl', role:'dialog', 'aria-modal':'true'}, props.children); }
 
 function RevealOverlay(props){
   var r = props.reveal, close = props.close;
-  useEffect(function(){ var t=setTimeout(close, REVEAL_MS+600); return function(){ clearTimeout(t); }; },[]);
+  var box = useRef(null);
+  useEffect(function(){
+    // flip each revealed card as it appears
+    if (box.current) {
+      var cs = box.current.querySelectorAll('.card');
+      for (var i=0;i<cs.length;i++) (function(el,d){ setTimeout(function(){ Anim.flipCard(el); }, d); })(cs[i], i*90);
+    }
+    var t=setTimeout(close, REVEAL_MS+600);
+    return function(){ clearTimeout(t); };
+  },[]);
   if (r.kind === 'card'){
     return h(Overlay,null,
       H2({}, r.title || 'Look'),
-      div({className:'reveal-card'}, h(Card,{face:true, v:r.v, size:'lg'})),
+      div({className:'reveal-card', ref:box}, h(Card,{card:r.card, size:'lg'})),
       div({className:'ring run', style:{'--dur':(REVEAL_MS/1000)+'s'}}, I({})),
       P({className:'sub'}, r.sub || 'Remember it. It will not be shown again.'),
       btn({className:'btn primary', onClick:close}, 'Got it'));
@@ -174,8 +254,8 @@ function RevealOverlay(props){
   if (r.kind === 'cards'){
     return h(Overlay,null,
       H2({}, r.title || 'Look'),
-      div({className:'row', style:{gap:'11px'}},
-        r.cards.map(function(c,i){ return h(Card,{key:i, face:true, v:c.v, slot:(c.slot!=null?c.slot+1:null)}); })),
+      div({className:'row', style:{gap:'11px'}, ref:box},
+        r.cards.map(function(c,i){ return h(Card,{key:i, card:c, slot:(c.slot!=null?c.slot+1:null)}); })),
       div({className:'ring run', style:{'--dur':(REVEAL_MS/1000)+'s'}}, I({})),
       P({className:'sub'}, r.sub || 'Remember them. Neither the table nor this app will show them again.'),
       btn({className:'btn primary', onClick:close}, 'Got it'));
@@ -193,36 +273,100 @@ function RevealOverlay(props){
 
 /* ---------------------------------------------------- screens */
 
+/* The door.
+ *
+ * "No" does not work. It slides away from the cursor, gives up after three
+ * tries, and the count goes on the Tab. This is the point of the whole
+ * thing, he always wants to play Cabo and everyone always says no, so it
+ * is the first thing anybody sees. */
 function Home(props){
   var s1 = useState(''), code=s1[0], setCode=s1[1];
   var s2 = useState(null), err=s2[0], setErr=s2[1];
   var s3 = useState(false), busy=s3[0], setBusy=s3[1];
+  var s4 = useState(0), refusals=s4[0], setRefusals=s4[1];
+  var s5 = useState({x:0,y:0}), off=s5[0], setOff=s5[1];
+  var s6 = useState(false), joining=s6[0], setJoining=s6[1];
 
   async function create(){
     setBusy(true); setErr(null);
-    try { Audio_.unlock(); var r = await API.createRoom(null); location.href = '/g/' + r.code; }
-    catch(e){ setErr(e.message); setBusy(false); }
+    try {
+      Audio_.unlock(); Audio_.cabo();
+      var r = await API.createRoom(null);
+      try { sessionStorage.setItem('beeshouse:refusals', String(refusals)); } catch(e){}
+      location.href = '/g/' + r.code;
+    } catch(e){ setErr(e.message); setBusy(false); }
   }
   function join(){
     var c = code.trim().toUpperCase();
     if (c.length < 3) { setErr('That is not a room code.'); return; }
     location.href = '/g/' + c;
   }
+  /* The No button runs away twice, gives up and says Fine, and then stops
+     pretending it was ever a No. Tap it once more and it turns into a Yes
+     like the other one, and either of them will deal. The joke only works
+     if it actually surrenders, so the last stage is a real Yes and not a
+     No wearing a costume. */
+  function dodge(){
+    Audio_.tap();
+    var n = refusals + 1;
+    setRefusals(n);
+    if (n >= 3) { setOff({x:0,y:0}); return; }   // cornered, stops moving
+    setOff({ x:(Math.random()*2-1)*118, y:(Math.random()*2-1)*54 });
+  }
+  var surrendered = refusals >= 4;
+
+  var caption = refusals===0 ? 'Two buttons. One of them works.'
+    : refusals===1 ? 'Try again.'
+    : refusals===2 ? 'It moved. That is allowed.'
+    : refusals===3 ? 'Three times. It is going on the Tab.'
+    : 'Both of them work now. It stopped pretending.';
+
+  if (joining) {
+    return div({className:'invite'},
+      div({className:'bee-big'}, '🐝'),
+      H1({className:'title'}, 'JOIN A', span({className:'amber'}, 'HOUSE')),
+      err ? div({className:'err'}, err) : null,
+      div({className:'stack', style:{gap:'10px', width:'100%', maxWidth:'320px'}},
+        div({className:'field'},
+          inp({ value:code, placeholder:'Room code', maxLength:6, autoCapitalize:'characters',
+                autoFocus:true,
+                onChange:function(e){ setCode(e.target.value.toUpperCase()); },
+                onKeyDown:function(e){ if(e.key==='Enter') join(); } })),
+        btn({className:'btn primary', onClick:join}, 'Go'),
+        btn({className:'btn ghost sm', onClick:function(){ setJoining(false); }}, 'Back')));
+  }
+
+  /* The small print. Every animal in this game was handed out by one
+     person, who gave himself the bee and then named the house after it,
+     and it seemed unfair for that to go unrecorded. Comes in a beat after
+     the page settles so it catches the eye on the way to the buttons. */
+  var d0 = useState(false), disclaimer = d0[0], setDisclaimer = d0[1];
+  useEffect(function(){
+    var t = setTimeout(function(){ setDisclaimer(true); }, 900);
+    return function(){ clearTimeout(t); };
+  }, []);
 
   return div({className:'invite'},
     div({className:'bee-big'}, '🐝'),
     H1({className:'title'}, 'THE BEE’S', span({className:'amber'}, 'HOUSE')),
-    P({className:'invite-q'}, 'Cabo, played one move at a time.'),
+    P({className:'invite-q'}, 'Hrutik wants to play Cabo.'),
+    disclaimer
+      ? div({className:'smallprint'},
+          span({className:'sp-tag'}, 'Disclaimer'),
+          span({}, 'All animals were assigned by Hrutik. No appeals were heard.'))
+      : null,
     err ? div({className:'err'}, err) : null,
-    div({className:'stack', style:{gap:'10px', width:'100%', maxWidth:'320px'}},
-      btn({className:'btn primary', disabled:busy, onClick:create}, busy ? 'Dealing…' : 'Start a new house'),
-      div({className:'field'},
-        inp({ value:code, placeholder:'Room code', maxLength:6, autoCapitalize:'characters',
-              onChange:function(e){ setCode(e.target.value.toUpperCase()); },
-              onKeyDown:function(e){ if(e.key==='Enter') join(); } })),
-      btn({className:'btn', onClick:join}, 'Join a house')),
-    P({className:'hint', style:{maxWidth:'32ch'}},
-      'Nobody has to be online at the same time. You get a link in the group, you play, you close it.'));
+    div({className:'answers'},
+      btn({ className:'btn primary yes-btn', disabled:busy, onClick:create },
+        busy ? 'Dealing…' : 'Yes'),
+      btn({ className:'btn no-btn' + (surrendered ? ' primary yes-btn turned' : ''),
+            style:{ transform:'translate('+off.x+'px,'+off.y+'px)' },
+            disabled: surrendered && busy,
+            onClick: surrendered ? create : dodge },
+        surrendered ? (busy ? 'Dealing…' : 'Yes') : (refusals>=3 ? 'Fine' : 'No')),
+      div({className:'refuse-count muted'}, caption)),
+    btn({className:'btn ghost sm', onClick:function(){ setJoining(true); }}, 'I have a room code'),
+    null);
 }
 
 function SeatPicker(props){
@@ -240,53 +384,180 @@ function SeatPicker(props){
     } catch(e){ setErr(e.message); setBusy(null); }
   }
 
+  /* Somebody claiming a seat that is already on another phone. The token
+     that comes back is inert until another player says yes. */
+  async function askFor(seat){
+    setBusy(seat); setErr(null);
+    try {
+      Audio_.unlock(); Audio_.tap();
+      var r = await API.seatRequest(code, seat);
+      props.onPending({ token:r.token, seat:r.seat, name:r.name, requestId:r.requestId });
+    } catch(e){ setErr(e.message); }
+    setBusy(null);
+  }
+
   return div({className:'stack', style:{gap:'14px', flex:1}},
     div({className:'stack center', style:{gap:'4px', paddingTop:'8px'}},
       span({className:'eyebrow'}, 'Room'),
       div({className:'codebox'}, code),
       P({className:'muted', style:{fontSize:'14px', maxWidth:'30ch', margin:'6px auto 0'}},
-        'Tap whoever you are. This device remembers it — you only do this once.')),
+        'Tap whoever you are. This device remembers it. You only do this once.')),
     err ? div({className:'err'}, err) : null,
     div({className:'seatgrid'},
       info.seats.map(function(st){
-        var mine = false;
-        return btn({ key:st.seat, className:'seat ' + (st.claimed ? 'off' : 'on'),
-                     disabled: st.claimed || busy!=null,
-                     onClick:function(){ take(st.seat); } },
-          span({className:'emo'}, st.emo),
-          div({className:'stack', style:{flex:1, gap:'1px', minWidth:0, textAlign:'left'}},
-            span({style:{fontWeight:600}}, st.name),
-            span({className:'abil'}, st.claimed ? 'already on another phone' : st.ability)));
+        return div({key:st.seat, className:'seatrow'},
+          btn({ className:'seat ' + (st.claimed ? 'off' : 'on'),
+                disabled: st.claimed || busy!=null,
+                onClick:function(){ take(st.seat); } },
+            span({className:'emo'}, st.emo),
+            div({className:'stack', style:{flex:1, gap:'1px', minWidth:0, textAlign:'left'}},
+              span({style:{fontWeight:600}}, st.name),
+              span({className:'abil'}, st.claimed ? 'already on another phone' : st.ability))),
+          st.claimed
+            ? btn({ className:'btn ghost sm mine-btn', disabled:busy!=null,
+                    onClick:function(){ askFor(st.seat); } }, 'This is me')
+            : null);
       })),
-    P({className:'hint'}, 'Picked the wrong one? Whoever set the room up can free a seat.'));
+    null);
 }
 
-
-function LobbyWait(props){
-  var view = props.view, code = props.code;
-  var url = location.origin + '/g/' + code;
-  var names = (view.waitingFor||[]).map(function(w){ return w.name; });
-  var text = "Come play Cabo in The Bee's House.\nRoom " + code + "\n" + url;
-  var copied = useState(false), was=copied[0], setWas=copied[1];
+/* Waiting to be let back in. The device has a token that does nothing yet,
+   so all it can do is ask again every few seconds until it works. */
+function SeatPending(props){
+  var p0 = useState(null), gone=p0[0], setGone=p0[1];
+  useEffect(function(){
+    var alive = true;
+    var t = setInterval(function(){
+      API.state(props.code, props.token)
+        .then(function(){ if(alive){ clearInterval(t); props.onIn(); } })
+        .catch(function(){ if(alive) setGone(function(n){ return (n||0)+1; }); });
+    }, 4000);
+    return function(){ alive=false; clearInterval(t); };
+  },[]);
   return div({className:'stack', style:{gap:'16px', flex:1}},
     div({className:'wait', style:{flex:'0 0 auto'}},
       div({className:'emo'}, '🐝'),
-      span({className:'eyebrow'}, 'Room ' + code),
-      H2({style:{fontFamily:'var(--f-disp)', fontSize:'24px', color:'var(--brass)'}},
-        'Waiting for ' + (names.length===1 ? names[0] : names.length + ' more')),
+      span({className:'eyebrow'}, 'Asked for ' + props.name + "'s seat"),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'23px', color:'var(--brass)'}},
+        'Waiting on the room'),
       P({className:'muted', style:{fontSize:'14px', maxWidth:'30ch'}},
-        names.length
-          ? 'Still to open the link: ' + names.join(', ') + '. Nothing starts until everyone has a seat.'
-          : 'Everyone is in.')),
-    div({className:'seatgrid'},
-      view.waitingFor.map(function(w){
-        return div({key:w.seat, className:'seat off'},
-          span({className:'emo'}, w.emo),
-          div({className:'stack', style:{flex:1, gap:'1px', textAlign:'left'}},
-            span({style:{fontWeight:600}}, w.name),
-            span({className:'abil'}, 'has not opened the link')));
-      })),
+        'Anybody else already playing can let you in. It shows up on their screen next time they open it.')),
     div({style:{flex:1}}),
+    btn({className:'btn wa', onClick:function(){
+      var url = location.origin + '/g/' + props.code;
+      var text = 'I lost my seat in The Bee\'s House. Somebody let me back in.\n' + url;
+      window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+    }}, 'Ask the group'),
+    btn({className:'btn ghost sm', onClick:props.cancel}, 'Never mind'));
+}
+
+/* The other side of it, on everybody else's screen. */
+function SeatRequests(props){
+  var rs = props.requests || [];
+  if (!rs.length) return null;
+  return div({className:'seatasks'},
+    rs.map(function(r){
+      return div({key:r.id, className:'seatask'},
+        div({className:'stack', style:{flex:1, gap:'2px', minWidth:0}},
+          span({className:'eyebrow'}, 'Somebody wants back in'),
+          span({}, h('b',null,r.name), ' says a new phone is theirs.')),
+        div({className:'row', style:{gap:'6px'}},
+          btn({className:'btn sm', disabled:props.busy,
+               onClick:function(){ props.decide(r.id, false); }}, 'No'),
+          btn({className:'btn primary sm', disabled:props.busy,
+               onClick:function(){ props.decide(r.id, true); }}, "That's them")));
+    }));
+}
+
+
+/* The lobby, which is the same table you will play on.
+ *
+ * It used to be a heading and a list of four names with "has not opened
+ * the link" under each. The table says the same thing better: the seats
+ * are laid out where they will be all game, the ones nobody is sitting in
+ * are dim with their cards greyed out, and the room fills up in front of
+ * you as people arrive.
+ */
+function LobbyWait(props){
+  var view = props.view, code = props.code;
+  var url = location.origin + '/g/' + code;
+  var names = (view.waitingFor || []).map(function(w){ return w.name; });
+  var text = Voices.message('invite', view.you.id, { url: url, salt: code });
+  var copied = useState(false), was = copied[0], setWas = copied[1];
+  var pk = useState([]), sel = pk[0], setSel = pk[1];
+  var pb = useState(false), peeking = pb[0], setPeeking = pb[1];
+  var pe = useState(null), perr = pe[0], setPerr = pe[1];
+
+  function toggle(i){
+    Audio_.tap();
+    var n = sel.slice(), k = n.indexOf(i);
+    if (k >= 0) n.splice(k, 1); else if (n.length < 2) n.push(i); else return;
+    setSel(n);
+  }
+  async function sayReady(){
+    setPeeking(true); setPerr(null);
+    try { Audio_.good(); await API.ready(code, props.token); props.refresh(); }
+    catch(e){ setPerr(e.message); }
+    setPeeking(false);
+  }
+  async function takeLook(){
+    setPeeking(true); setPerr(null);
+    try {
+      Audio_.flip();
+      var r = await API.peek(code, props.token, sel);
+      /* Put them down. Two cards left sitting raised is a sign saying
+         "these are the two I know" to anybody glancing at your phone, and
+         it is the one thing on this screen you would not say out loud. */
+      setSel([]);
+      props.onReveal(r.reveal); props.refresh();
+    }
+    catch(e){ setPerr(e.message); }
+    setPeeking(false);
+  }
+
+  /* You can take your opening look while you wait. Your four were dealt
+     when the room was made, so there is nothing to wait for to do it, and
+     sitting in front of your own face-down cards unable to touch them was
+     the least interesting way to spend the wait. */
+  var canPeek = view.phase === 'peek' && !view.peekDone;
+
+  return div({className:'stack', style:{gap:'12px', flex:1}},
+    div({className:'stack center', style:{gap:'3px', paddingTop:'4px'}},
+      span({className:'eyebrow'}, 'Room ' + code),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'22px', color:'var(--brass)'}},
+        names.length === 0 ? 'EVERYONE IS IN'
+          : names.length === 1 ? 'WAITING FOR ' + names[0].toUpperCase()
+          : 'WAITING FOR ' + names.length + ' MORE')),
+
+    h(TableView,{ view:view, send:function(){}, aim:null, frozen:true,
+                  onPickCard:function(){}, onPickPlayer:function(){} }),
+
+    perr ? div({className:'err'}, perr) : null,
+
+    h(MyHand,{ view:view,
+      tag: canPeek ? 'pick two' : (view.peekDone ? 'you have looked' : 'you are in'),
+      selected:function(i){ return sel.indexOf(i) >= 0; },
+      targetable:function(i){ return canPeek && (sel.length < 2 || sel.indexOf(i) >= 0); },
+      onCard: canPeek ? function(i){ toggle(i); } : null }),
+
+    canPeek
+      ? btn({className:'btn primary', disabled:sel.length !== 2 || peeking, onClick:takeLook},
+          peeking ? 'Looking…'
+                  : sel.length !== 2 ? 'Pick ' + (2 - sel.length) + ' of yours to look at'
+                  : 'Look at these two')
+      : view.peekDone && !view.readyDone
+        ? div({className:'stack', style:{gap:'8px'}},
+            btn({className:'btn', disabled:peeking, onClick:takeLook},
+              peeking ? 'Looking…' : '👁️  Look at them again'),
+            btn({className:'btn primary', disabled:peeking, onClick:sayReady},
+              'I have got them, start when everybody is ready'),
+            P({className:'hint'}, 'Look as many times as you like. Once the round starts they are gone.'))
+        : view.readyDone
+          ? P({className:'hint'}, 'You are ready. ' + view.readyCount + ' of '
+              + view.players.length + ' have said the same.')
+          : P({className:'hint', style:{marginTop:'-2px'}}, 'Your four are dealt and waiting.'),
+
+    div({style:{flex:1, minHeight:'8px'}}),
     btn({className:'btn wa', onClick:function(){ Audio_.tap();
       window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'); }},
       'Send the link to the group'),
@@ -296,6 +567,7 @@ function LobbyWait(props){
       was ? 'Copied' : 'Copy the link'),
     btn({className:'btn ghost sm', onClick:props.refresh}, 'Check again'));
 }
+
 
 function PeekScreen(props){
   var view = props.view, code = props.code, token = props.token;
@@ -312,119 +584,432 @@ function PeekScreen(props){
   async function go(){
     setBusy(true); setErr(null);
     try { Audio_.flip(); var r = await API.peek(code, token, sel); props.onReveal(r.reveal); props.refresh(); }
-    catch(e){ setErr(e.message); setBusy(false); }
+    catch(e){ setErr(e.message); }
+    setBusy(false);
   }
 
-  if (view.peekDone){
-    var left = view.players.filter(function(p){ return true; }).length;
+  async function lookAgain(){
+    setBusy(true); setErr(null);
+    try { Audio_.flip(); var r = await API.peek(code, token, sel); props.onReveal(r.reveal); }
+    catch(e){ setErr(e.message); }
+    setBusy(false);
+  }
+  async function sayReady(){
+    setBusy(true); setErr(null);
+    try { Audio_.good(); await API.ready(code, token); props.refresh(); }
+    catch(e){ setErr(e.message); }
+    setBusy(false);
+  }
+
+  /* Looked, but not finished looking. Nobody has played anything yet, so
+     there is nothing to be gained by staring at your own two cards for a
+     while, and plenty to be lost by forgetting them thirty seconds in. */
+  if (view.peekDone && !view.readyDone){
+    return div({className:'stack', style:{gap:'12px', flex:1}},
+      div({className:'stack center', style:{gap:'3px', paddingTop:'4px'}},
+        span({className:'eyebrow'}, 'Opening peek'),
+        H2({style:{fontFamily:'var(--f-disp)', fontSize:'22px', color:'var(--brass)'}},
+          'TAKE YOUR TIME')),
+      err ? div({className:'err'}, err) : null,
+      h(TableView,{ view:view, send:function(){}, aim:null, frozen:true,
+                    onPickCard:function(){}, onPickPlayer:function(){} }),
+      h(MyHand,{ view:view, tag:'you have looked' }),
+      div({style:{flex:1, minHeight:'6px'}}),
+      btn({className:'btn', disabled:busy, onClick:lookAgain},
+        busy ? 'Looking…' : '👁️  Look at them again'),
+      btn({className:'btn primary', disabled:busy, onClick:sayReady},
+        'I have got them, deal'),
+      P({className:'hint'}, 'Look as many times as you like. Once the round starts they are gone.'));
+  }
+
+  if (view.readyDone){
     return div({className:'wait'},
       div({className:'spin'}),
-      span({className:'eyebrow'}, 'Waiting'),
+      span({className:'eyebrow'}, 'Ready'),
       H2({style:{fontFamily:'var(--f-disp)', fontSize:'23px'}}, 'Everyone else is looking'),
       P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch'}},
-        'You have had your two. The round starts when the last person has had theirs — which could be tomorrow.'),
+        view.readyCount + ' of ' + view.players.length + ' are ready.'),
       btn({className:'btn', onClick:props.refresh}, 'Check again'));
   }
 
-  return div({className:'stack', style:{gap:'16px', flex:1}},
-    div({className:'table-area', style:{gap:'16px'}},
-      div({className:'stack center', style:{gap:'4px'}},
-        span({className:'eyebrow'}, 'Opening peek'),
-        H2({style:{fontFamily:'var(--f-disp)', fontSize:'23px', color:'var(--brass)'}},
-          view.you.emo + ' ' + view.you.name),
-        P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch', margin:'0 auto'}},
-          'Choose any two of your four. You get one look. Nothing here will show them to you again.')),
-      err ? div({className:'err'}, err) : null,
-      div({className:'hand'},
-        view.you.hand.map(function(c,i){
-          return h(Card,{ key:c.id, slot:i+1, sel:sel.indexOf(i)>=0, onClick:function(){ toggle(i); } });
-        }))),
-    btn({className:'btn primary', disabled:sel.length!==2 || busy,
-         onClick:go}, busy ? 'Looking…' : sel.length!==2 ? 'Pick ' + (2-sel.length) + ' more' : 'Look at these two'),
-    P({className:'hint'}, 'Everyone does this at the same time, on their own phone.'));
+  /* The opening peek happens at the table too. Your four are in the same
+     place they will be all game, so the two you choose now are the two you
+     are trying to remember the position of later. Picking them out of a
+     separate screen and then meeting them again somewhere else was a small
+     way of making the memory harder than the game intends. */
+  return div({className:'stack', style:{gap:'12px', flex:1}},
+    div({className:'stack center', style:{gap:'3px', paddingTop:'4px'}},
+      span({className:'eyebrow'}, 'Opening peek'),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'22px', color:'var(--brass)'}},
+        'PICK TWO OF YOURS')),
+    err ? div({className:'err'}, err) : null,
+
+    h(TableView,{ view:view, send:function(){}, aim:null, frozen:true,
+                  onPickCard:function(){}, onPickPlayer:function(){} }),
+
+    h(MyHand,{ view:view, tag:'one look only',
+      selected:function(i){ return sel.indexOf(i) >= 0; },
+      targetable:function(i){ return sel.length < 2 || sel.indexOf(i) >= 0; },
+      onCard:function(i){ toggle(i); } }),
+
+    div({style:{flex:1}}),
+    btn({className:'btn primary', disabled:sel.length!==2 || busy, onClick:go},
+      busy ? 'Looking…' : sel.length!==2 ? 'Pick ' + (2-sel.length) + ' more' : 'Look at these two'));
+}
+
+/* Is this seat looking at the game right now? The server decides what
+   "right now" means; this only reads the answer. */
+function isHere(view, seat){
+  return (view.presence || []).some(function(p){ return p.seat === seat && p.here; });
+}
+function hereCount(view){
+  return (view.presence || []).filter(function(p){ return p.here; }).length;
+}
+
+/* How long a turn has been sitting, in words rather than a timestamp.
+   Nobody wants to subtract dates on their phone. */
+function heldFor(hours){
+  if (hours == null) return null;
+  if (hours < 1)  return 'just now';
+  if (hours < 2)  return 'about an hour';
+  if (hours < 24) return Math.round(hours) + ' hours';
+  var d = Math.floor(hours / 24);
+  var rem = Math.round(hours - d * 24);
+  if (d === 1 && rem < 2) return 'a day';
+  return d + (d === 1 ? ' day' : ' days') + (rem >= 2 ? ' and ' + rem + ' hours' : '');
 }
 
 function WaitScreen(props){
   var view = props.view;
   var cur = view.players[view.turn];
   var nudge = props.nudge;
-  return div({className:'stack', style:{gap:'16px', flex:1}},
-    div({className:'wait', style:{flex:'0 0 auto', paddingBottom:'6px'}},
-      div({className:'emo'}, cur ? cur.emo : '🐝'),
+  var clock = view.clock || null;
+  var late = clock && clock.overdue;
+  /* Two taps, not one. This throws a card away and puts a line on the Tab
+     against somebody who is not here to argue, so it should not be
+     possible to do it with a thumb in a pocket. */
+  var a0 = useState(false), armed = a0[0], setArmed = a0[1];
+  var held = clock ? heldFor(clock.hours) : null;
+
+  /* The table stays on screen when it is not your turn.
+   *
+     It used to be a line of text and a briefing, which meant the one time
+     you could actually watch somebody else play was the one time the table
+     was not on your screen. Now it is always there, so a swap taken on
+     Hrutik's phone glides across yours a few seconds later while you are
+     sitting looking at it. You still see no faces, only movement, which is
+     exactly what you would see across a real table. */
+  return div({className:'stack', style:{gap:'10px', flex:1}},
+    div({className:'stack center', style:{gap:'2px', paddingTop:'2px'}},
       span({className:'eyebrow'}, 'Not your turn'),
-      H2({style:{fontFamily:'var(--f-disp)', fontSize:'25px', color:'var(--brass)'}},
-        cur ? cur.name + ' is up' : ''),
-      P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch'}},
-        'Nothing for you to do. Close the tab — you’ll get a message when it comes round.')),
+      H2({style:{fontFamily:'var(--f-disp)', fontSize:'23px', color:'var(--brass)'}},
+        cur ? (cur.emo + '  ' + cur.name + ' is up') : ''),
+      held ? span({className: late ? 'held late' : 'held'},
+               late ? 'Sitting on it for ' + held : 'Up for ' + held) : null,
+      isHere(view, view.turn)
+        ? span({className:'here-now'}, (cur ? cur.name : 'They') + ' is here now')
+        : (hereCount(view) > 1
+            ? span({className:'here-now dim'}, hereCount(view) + ' of you are here')
+            : null)),
+
+    h(TableView,{ view:view, send:function(){}, aim:null, frozen:true,
+                  onPickCard:function(){}, onPickPlayer:function(){} }),
+    h(MyHand,{ view:view, tag:'your four',
+      note:function(i){ return props.notes ? (props.notes[i] || '') : ''; },
+      onNote:props.onNote }),
+
     h(Briefing, { b: view.briefing }),
-    div({style:{flex:1}}),
-    nudge ? btn({className:'btn wa', onClick:function(){ Audio_.tap(); window.open(nudge.whatsapp,'_blank'); }},
-              'Nudge the group about ' + nudge.forName) : null,
-    btn({className:'btn ghost', onClick:props.refresh}, 'Check again'));
+    div({style:{flex:1, minHeight:'6px'}}),
+    nudge ? btn({className:'btn ' + (late ? 'wa loud' : 'wa'),
+                 onClick:function(){ Audio_.tap(); window.open(nudge.whatsapp,'_blank'); }},
+              (late ? 'Nudge the group again about ' : 'Nudge the group about ') + nudge.forName) : null,
+    clock && clock.youMaySkip
+      ? btn({className:'btn ghost danger', disabled:props.busy,
+             onClick:function(){ if(armed){ Audio_.tap(); props.skip(); } else setArmed(true); }},
+          armed
+            ? 'Tap again. One of ' + (cur ? cur.name : 'their') + "'s cards gets thrown away"
+            : 'Skip ' + (cur ? cur.name : 'them') + ' and move on')
+      : null,
+    btn({className:'btn ghost sm', onClick:props.refresh}, 'Check again'));
+}
+
+/* One line under one of your own cards. Tap to write, tap away to keep. */
+function NoteChip(props){
+  var e0 = useState(false), editing=e0[0], setEditing=e0[1];
+  var t0 = useState(props.text || ''), txt=t0[0], setTxt=t0[1];
+  useEffect(function(){ setTxt(props.text || ''); }, [props.text]);
+
+  function commit(){ setEditing(false); props.onSave(txt.trim()); }
+
+  if (editing) return inp({
+    className:'note-in', value:txt, autoFocus:true, maxLength:16,
+    placeholder:'e.g. low, or K',
+    onChange:function(e){ setTxt(e.target.value); },
+    onBlur:commit,
+    onKeyDown:function(e){ if(e.key==='Enter') commit(); if(e.key==='Escape'){ setTxt(props.text||''); setEditing(false); } }
+  });
+
+  return btn({ className:'note' + (props.text ? ' has' : ''),
+               onClick:function(){ setEditing(true); } },
+    props.text || '+');
+}
+
+/* ---------------------------------------------------- the round table
+
+   Everybody sits around one table with their four cards face down in front
+   of them, the way they would if this were happening on a floor in Pune.
+
+   The seats are placed by hand rather than by trigonometry. A formula gives
+   an even arc and an even arc is not what you want on a 400px phone: the
+   two people opposite you want to be high and close together, the two
+   beside you want to be low and wide. These four numbers are that, tuned by
+   looking at it.
+
+   The important part is not the shape. It is that the cards on the table
+   are the real cards, with the real ids, so a power can be aimed by tapping
+   the thing you mean instead of walking through two menus that describe it.
+*/
+var SEATING = {
+  1: [{x:50,y:18}],
+  2: [{x:30,y:20}, {x:70,y:20}],
+  3: [{x:16,y:44}, {x:50,y:15}, {x:84,y:44}],
+  4: [{x:15,y:46}, {x:35,y:15}, {x:65,y:15}, {x:85,y:46}]
+};
+function seating(n){
+  if (SEATING[n]) return SEATING[n];
+  var out = [];                       // more than five people, fall back to an arc
+  for (var i = 0; i < n; i++){
+    var a = Math.PI + ((i + 1) / (n + 1)) * Math.PI;
+    out.push({ x: 50 + 40 * Math.cos(a), y: 46 + 38 * Math.sin(a) });
+  }
+  return out;
+}
+
+function TableView(props){
+  var view = props.view, me = view.you, aim = props.aim || null;
+  var others = view.players.filter(function(p){ return p.seat !== me.seat; });
+  var spots = seating(others.length);
+
+  /* Who has actually shown up. In the lobby a seat can be sitting there
+     with a name on it and nobody behind it, and the table is a better way
+     to say that than a list is: you can see the shape of the game you are
+     waiting for. */
+  var claimed = {};
+  (view.roster || []).forEach(function(r){ claimed[r.seat] = !!r.claimed; });
+  function isIn(seat){ return (view.roster || []).length ? !!claimed[seat] : true; }
+
+  /* Somebody arriving should look like somebody arriving. Their four cards
+     were four dashed outlines a second ago and now they are real, so they
+     get dealt in the way a hand is dealt in at the start of a round: a
+     short stagger, one after the other, with the sound of it.
+
+     Held in a ref rather than state because it is a comparison against the
+     last render, not a fact about the game. */
+  var wasIn = useRef(null);
+  var arrivals = useState({}), arriving = arrivals[0], setArriving = arrivals[1];
+  useEffect(function(){
+    var now = {};
+    (view.roster || []).forEach(function(r){ now[r.seat] = !!r.claimed; });
+    if (wasIn.current){
+      var fresh = {};
+      Object.keys(now).forEach(function(k){
+        if (now[k] && !wasIn.current[k]) fresh[k] = true;
+      });
+      if (Object.keys(fresh).length){
+        Audio_.deal();
+        setArriving(fresh);
+        setTimeout(function(){ setArriving({}); }, 1200);
+      }
+    }
+    wasIn.current = now;
+  }, [(view.roster || []).map(function(r){ return r.claimed ? 1 : 0; }).join('')]);
+
+  function oppCardTappable(seat){
+    if (!aim) return false;
+    if (aim.what === 'anyCard') return true;
+    if (aim.what === 'opponentCard') return aim.seats ? aim.seats.indexOf(seat) >= 0 : true;
+    return false;
+  }
+
+  var seats = others.map(function(p, i){
+    var pos = spots[i] || { x:50, y:20 };
+    var picking = aim && aim.what === 'players';
+    var chosen = picking && (aim.chosen || []).indexOf(p.seat) >= 0;
+    var seated = isIn(p.seat);
+    return div({ key:p.id,
+                 className:'seat-t'
+                   + (p.calledCabo ? ' cabo' : '')
+                   + (isHere(view, p.seat) ? ' here' : '')
+                   + (picking ? ' pickable' : '')
+                   + (chosen ? ' chosen' : '')
+                   + (seated ? '' : ' empty')
+                   + (arriving[p.seat] ? ' arriving' : '')
+                   + (aim && aim.what === 'ownCard' ? ' dim' : ''),
+                 style:{ left: pos.x + '%', top: pos.y + '%' },
+                 onClick: picking ? function(){ props.onPickPlayer(p.seat); } : null },
+      div({className:'seat-who'},
+        span({className:'emo'}, p.emo),
+        span({className:'nm'}, p.name),
+        p.calledCabo ? span({className:'cabo-tag'}, 'CABO') : null),
+      div({className:'seat-cards'},
+        (p.slots || []).map(function(c, k){
+          if (!seated) return div({ key:c.id, className:'ghost-card' });
+          var live = oppCardTappable(p.seat);
+          return h(Card, { key:c.id, id:c.id, size:'xs',
+            targetable: live,
+            style: arriving[p.seat] ? { animationDelay: (k * 110) + 'ms' } : null,
+            onClick: live ? function(e){
+              if (e && e.stopPropagation) e.stopPropagation();
+              props.onPickCard(p.seat, k);
+            } : null });
+        })),
+      seated ? null : span({className:'not-yet'}, 'not here yet'));
+  });
+
+  var top = view.discardTop, drawn = view.drawn, slapping = (view.sel || []).length > 0;
+  // frozen is the lobby: the table is set and shown, but nothing on it works yet
+  var pilesLive = !props.frozen && !aim && !drawn && !slapping;
+
+  return div({className:'roundtable' + (aim ? ' aiming' : '')},
+    div({className:'felt-ring'}),
+    seats,
+    div({className:'table-piles'},
+      div({className:'pile'},
+        h(Card,{ empty:!view.deckCount, size:'sm',
+          onClick: pilesLive ? function(){ Audio_.deal(); props.send({type:'DRAW'}); } : null }),
+        span({className:'lbl'}, 'Deck · ' + view.deckCount)),
+      div({className:'pile'},
+        h(Card,{ card:top, empty:!top, size:'sm',
+          onClick: (pilesLive && top) ? function(){ Audio_.deal(); props.send({type:'TAKE_DISCARD'}); } : null }),
+        span({className:'lbl'}, 'Discard · ' + view.discardCount)),
+      null));
+}
+
+/* Your own four, in the same place on every screen.
+ *
+ * They were drawn three different ways before: one in the lobby (not at
+ * all), one during the opening peek, one at the table. Same four cards,
+ * three layouts, so your eye had to re-find them each time the screen
+ * changed. Now it is one component and they never move.
+ */
+function MyHand(props){
+  var view = props.view, me = view.you;
+  return div({},
+    div({className:'you-hdr'},
+      span({className:'emo'}, me.emo),
+      span({className:'nm'}, me.name),
+      props.tag ? span({className:'chip'}, props.tag) : null),
+    div({className:'hand'},
+      me.hand.map(function(c, i){
+        return div({key:c.id, className:'handslot'},
+          h(Card,{ id:c.id, slot:i+1,
+            sel: props.selected ? props.selected(i) : false,
+            targetable: props.targetable ? props.targetable(i) : false,
+            onClick: props.onCard ? function(){ props.onCard(i); } : null }),
+          props.note ? h(NoteChip,{ text: props.note(i),
+                                    onSave:function(t){ props.onNote(i, t); } })
+                     : null);
+      })));
 }
 
 function Board(props){
   var view = props.view, send = props.send;
+  var n0 = useState(function(){ return Notes.all(props.code, view.round); }),
+      notes = n0[0], setNotes = n0[1];
+  useEffect(function(){ setNotes(Notes.all(props.code, view.round)); }, [view.round]);
   var me = view.you;
   var top = view.discardTop;
   var drawn = view.drawn;
   var slapping = (view.sel || []).length > 0;
+  var pick = props.pick || {}, setPick = props.setPick;
 
-  var opponents = div({className:'opponents'},
-    view.players.map(function(p){
-      if (p.seat === me.seat) return null;
-      return div({ key:p.id, className:'opp' + (p.calledCabo ? ' active' : '') },
-        span({className:'emo'}, p.emo),
-        span({className:'nm'}, p.name),
-        div({className:'mini'}, p.slots.map(function(c,k){ return I({key:k}); })));
-    }));
+  /* What the table is asking you to tap, if anything. A power used to be
+     aimed through two menus: pick a person, then pick a card, both of them
+     lists of names in front of the table rather than the table itself. Now
+     the table is the interface and this says which parts of it are live. */
+  var aim = null;
+  if (view.modalKind === 'spyPick' && pick.stage !== 'done')
+    aim = { what:'opponentCard', say:'Tap the card you want to look at' };
+  else if (view.modalKind === 'swapMine')
+    aim = pick.mine == null
+      ? { what:'ownCard',      say:'Tap one of yours to trade away' }
+      : { what:'opponentCard', say:'Now tap the card you want in its place' };
+  else if (view.modalKind === 'choosePeek' && pick.stage === 'peek')
+    aim = { what:'ownCard', say:'Tap the one you want to look at' };
+  else if (view.modalKind === 'choosePeek' && pick.stage === 'listenTarget')
+    aim = { what:'anyCard', say:'Tap any card on the table, including your own' };
+  else if (view.modalKind === 'sting' && view.players.length > 2)
+    aim = { what:'players', say:'Tap two of them', chosen: pick.list || [] };
 
-  var piles = div({className:'piles'},
-    div({className:'pile'},
-      h(Card,{ empty:!view.deckCount, size:'sm',
-        onClick:(!drawn && !slapping) ? function(){ Audio_.deal(); send({type:'DRAW'}); } : null }),
-      span({className:'lbl'}, 'Deck · ' + view.deckCount)),
-    div({className:'pile'},
-      h(Card,{ face:!!top, v:top?top.v:0, empty:!top, size:'sm',
-        onClick:(!drawn && !slapping && top) ? function(){ Audio_.deal(); send({type:'TAKE_DISCARD'}); } : null }),
-      span({className:'lbl'}, 'Discard · ' + view.discardCount)),
-    drawn ? div({className:'pile'},
-      h(Card,{ face:true, v:drawn.v, size:'sm' }),
-      span({className:'lbl', style:{color:'var(--brass)'}}, 'In hand')) : null);
+  function onPickCard(seat, idx){
+    if (!aim) return;
+    if (aim.what === 'anyCard'){ setPick({ stage:'listenQ', seat:seat, idx:idx }); return; }
+    if (view.modalKind === 'spyPick'){ Audio_.spy(); send({type:'SPY', seat:seat, idx:idx}); return; }
+    if (view.modalKind === 'swapMine' && pick.mine != null){
+      Audio_.swap(); send({type:'SWAP_DO', seat:seat, mine:pick.mine, idx:idx});
+    }
+  }
+  function onPickOwn(i){
+    if (!aim || aim.what !== 'ownCard') return;
+    if (view.modalKind === 'choosePeek'){ Audio_.peek(); send({type:'PEEK_OWN', idx:i}); return; }
+    if (view.modalKind === 'swapMine'){ Audio_.tap(); setPick({ mine:i }); }
+  }
+  function onPickPlayer(seat){
+    if (!aim || aim.what !== 'players') return;
+    Audio_.tap();
+    var l = (pick.list || []).slice(), k = l.indexOf(seat);
+    if (k >= 0) l.splice(k,1); else if (l.length < 2) l.push(seat); else return;
+    setPick({ list:l });
+  }
 
   var prompt = drawn
     ? div({className:'prompt'},
         drawn.from === 'discard'
-          ? ['You took the ', h('b',{key:'v'}, String(drawn.v)), '. Off the discard it has to go into your hand — tap a slot.']
-          : powerOf(drawn.v)
-            ? ['You drew a ', h('b',{key:'v'}, String(drawn.v)), '. Throw it away to use its power, or put it in your hand.']
-            : ['You drew a ', h('b',{key:'v'}, String(drawn.v)), '. Tap a slot to keep it, or throw it away.'])
+          ? ['You took the ', h('b',{key:'v'}, cardText(drawn)), '. Off the discard it has to go into your hand, tap a slot.']
+          : powerOf(drawn.r)
+            ? ['You drew the ', h('b',{key:'v'}, cardText(drawn)), '. Throw it away to use its power, or put it in your hand.']
+            : ['You drew the ', h('b',{key:'v'}, cardText(drawn)), '. Tap a slot to keep it, or throw it away.'])
     : slapping
       ? div({className:'prompt'}, 'Claiming ', h('b',null,String(view.sel.length)),
-          view.sel.length===1 ? ' card is a ' : ' cards are all ', h('b',null, top?String(top.v):'—'),
+          view.sel.length===1 ? ' card is a ' : ' cards are all ', h('b',null, top?top.r:' '),
           '. Wrong and you take a penalty card.')
       : null;
 
-  var hand = div({},
-    div({className:'you-hdr'},
-      span({className:'emo'}, me.emo),
-      span({className:'nm'}, me.name),
-      span({className:'chip'}, me.ability + (me.abilityUsed ? ' · used' : ' · ready'))),
-    div({className:'hand'},
-      me.hand.map(function(c,i){
-        return h(Card,{ key:c.id, slot:i+1, sel:(view.sel||[]).indexOf(i)>=0,
-          onClick: drawn
-            ? function(){ Audio_.place(); send({type:'PLACE', idx:i}); }
-            : top
-              ? function(){ Audio_.tap(); send({type:'SLAP_TOGGLE', idx:i}); }
-              : null });
-      })));
+  var mineLive = aim && (aim.what === 'ownCard' || aim.what === 'anyCard');
+
+  /* The card you just drew sits directly above your own four, not out in
+     the middle with the piles. It is in your hand, so it belongs where
+     your hand is, and the slot you are about to drop it into is one row
+     below it. */
+  var drawnRow = drawn
+    ? div({className:'drawn-row'},
+        div({className:'stack center', style:{gap:'4px'}},
+          h(Card,{ card:drawn, id:drawn.id }),
+          span({className:'lbl'}, drawn.from === 'discard' ? 'Off the discard' : 'You drew')))
+    : null;
+
+  var hand = h(MyHand,{ view:view,
+    tag: me.ability + (me.abilityUsed ? ' · used' : ' · ready'),
+    selected:function(i){
+      return (view.sel||[]).indexOf(i) >= 0
+          || (view.modalKind === 'swapMine' && pick.mine === i);
+    },
+    targetable:function(){ return !!mineLive; },
+    onCard: mineLive
+      ? function(i){ aim.what === 'anyCard' ? onPickCard(me.seat, i) : onPickOwn(i); }
+      : drawn
+        ? function(i){ Audio_.place(); send({type:'PLACE', idx:i}); }
+        : top
+          ? function(i){ Audio_.tap(); send({type:'SLAP_TOGGLE', idx:i}); }
+          : null,
+    note:function(i){ return notes[i] || ''; },
+    onNote:function(i, t){ setNotes(Notes.set(props.code, view.round, i, t)); } });
 
   var actions;
   if (view.pendingEnd){
     actions = div({className:'actions'},
       btn({className:'act gold wide', onClick:function(){ Audio_.flip(); send({type:'END_TURN'}); }},
-        span({className:'t'}, view.extra>0 ? 'Charge — take your second action' : 'End turn'),
+        span({className:'t'}, view.extra>0 ? 'Charge. Take your second action' : 'End turn'),
         span({className:'s'}, view.extra>0 ? 'Rhino' : 'Hands over to the next player')));
   } else if (drawn){
     actions = drawn.from==='discard'
@@ -432,7 +1017,7 @@ function Board(props){
       : div({className:'actions'},
           btn({className:'act gold wide', onClick:function(){ Audio_.place(); send({type:'DISCARD_DRAWN'}); }},
             span({className:'t'}, 'Throw it away'),
-            span({className:'s'}, powerOf(drawn.v) ? 'Uses its ' + powerOf(drawn.v).toUpperCase() + ' power' : 'No power on this one')),
+            span({className:'s'}, powerOf(drawn.r) ? 'Uses its ' + powerOf(drawn.r).toUpperCase() + ' power' : 'No power on this one')),
           P({className:'hint wide'}, 'Or tap one of your slots to swap it in.'));
   } else if (slapping){
     actions = div({className:'actions'},
@@ -445,7 +1030,7 @@ function Board(props){
       btn({className:'act gold', onClick:function(){ Audio_.deal(); send({type:'DRAW'}); }},
         span({className:'t'},'Draw'), span({className:'s'},'From the deck')),
       btn({className:'act', disabled:!top, onClick:function(){ Audio_.deal(); send({type:'TAKE_DISCARD'}); }},
-        span({className:'t'},'Take discard'), span({className:'s'}, top ? ('The '+top.v) : 'Empty')),
+        span({className:'t'},'Take discard'), span({className:'s'}, top ? ('The ' + cardText(top)) : 'Empty')),
       btn({className:'act', disabled:me.sweepUsed || !view.discardCount,
            onClick:function(){ Audio_.sweep(); send({type:'SWEEP'}); }},
         span({className:'t'},'🧹 Sweep'), span({className:'s'}, me.sweepUsed ? 'Used this round' : 'Wipe the pile')),
@@ -460,42 +1045,49 @@ function Board(props){
   return div({className:'stack', style:{flex:1, gap:'0'}},
     view.briefing && (view.briefing.sinceThen||[]).length
       ? div({style:{marginBottom:'12px'}}, h(Briefing,{b:view.briefing})) : null,
-    div({className:'table-area'}, opponents, piles, prompt, hand),
-    actions);
+    div({className:'table-area'},
+      h(TableView,{ view:view, send:send, aim:aim,
+                    onPickCard:onPickCard, onPickPlayer:onPickPlayer }),
+      aim ? div({className:'aiming-bar'},
+              span({}, aim.say),
+              btn({className:'btn ghost sm', onClick:function(){
+                if (view.modalKind === 'swapMine' && pick.mine != null) { setPick({}); return; }
+                setPick({}); send({type:'CLOSE_MODAL'});
+              }}, view.modalKind === 'swapMine' && pick.mine != null ? 'Back' : 'Never mind'),
+              (aim.what === 'players' && (pick.list||[]).length === 2)
+                ? btn({className:'btn primary sm', onClick:function(){
+                    Audio_.sting(); send({type:'STING_DONE', a:pick.list[0], b:pick.list[1]});
+                  }}, 'Sting them')
+                : null)
+          : prompt,
+      drawnRow,
+      hand),
+    aim ? null : actions);
 }
 
-/* prompts that need a second choice — all resolved by asking the server */
+/* prompts that need a second choice, all resolved by asking the server */
+/* What is left of the menus.
+ *
+ * Aiming a power at a card now happens on the table, so everything that
+ * used to be "pick a person, then pick a card" is gone from here. What
+ * remains is the choices a table cannot express: a fork between two
+ * different powers, a list of questions, and the screens that report a
+ * result. */
 function ChoiceModal(props){
   var view = props.view, send = props.send, kind = view.modalKind;
-  var st = useState({}), pick=st[0], setPick=st[1];
-  useEffect(function(){ setPick({}); }, [kind]);
+  var pick = props.pick || {}, setPick = props.setPick;
   var me = view.you;
   var others = view.players.filter(function(p){ return p.seat !== me.seat; });
   function close(){ send({type:'CLOSE_MODAL'}); }
 
   if (kind === 'choosePeek'){
-    if (pick.stage === 'peek'){
-      return h(Overlay,null, H2({},'Peek — which of yours?'),
-        div({className:'hand'}, me.hand.map(function(c,i){
-          return h(Card,{key:c.id, slot:i+1, onClick:function(){ Audio_.peek(); send({type:'PEEK_OWN', idx:i}); }});
-        })));
-    }
-    if (pick.stage === 'listenTarget'){
-      return h(Overlay,null, H2({},'Listen — whose card?'),
-        P({className:'sub'},'Any card on the table. Even ones you could never look at.'),
-        div({className:'plist'}, view.players.map(function(p){
-          return div({key:p.id, className:'stack', style:{gap:'6px'}},
-            div({className:'prow'}, span({className:'emo'},p.emo),
-              span({className:'nm'}, p.seat===me.seat ? 'You' : p.name)),
-            div({className:'row', style:{gap:'7px', justifyContent:'center'}},
-              p.slots.map(function(c,k){
-                return h(Card,{key:c.id, size:'sm', slot:k+1,
-                  onClick:function(){ setPick({stage:'listenQ', seat:p.seat, idx:k}); }});
-              })));
-        })));
-    }
+    // the peek and listen targets are tapped on the table itself
+    if (pick.stage === 'peek' || pick.stage === 'listenTarget') return null;
     if (pick.stage === 'listenQ'){
-      var QS = ['Is it even?','Is it under 5?','Is it over 9?','Is it a power card?'];
+      /* Never hard-code these. The server answers by index, so the list has
+         to be the server's list or you get a true answer to the wrong
+         question. It ships with the view for exactly that reason. */
+      var QS = view.listenQuestions || [];
       return h(Overlay,null, H2({},'Ask one question'),
         P({className:'sub'},'You get a true answer, and only that. The card itself never travels.'),
         div({className:'qgrid'}, QS.map(function(q,i){
@@ -505,114 +1097,43 @@ function ChoiceModal(props){
     }
     return h(Overlay,null,
       H2({},'Seven or eight'),
-      P({className:'sub'},'Look at one of your own — or listen instead, and learn one true thing about anybody’s.'),
+      P({className:'sub'},'Look at one of your own, or listen instead, and learn one true thing about anybody’s.'),
       div({className:'qgrid'},
         btn({className:'btn primary', onClick:function(){ setPick({stage:'peek'}); }}, '👁️  Peek at one of mine'),
         btn({className:'btn', onClick:function(){ setPick({stage:'listenTarget'}); }}, '👂  Listen to anyone’s')));
   }
 
-  if (kind === 'spyPick'){
-    if (pick.seat != null){
-      var tp = view.players.filter(function(p){ return p.seat===pick.seat; })[0];
-      return h(Overlay,null, H2({},'Spy on ' + tp.name),
-        div({className:'hand'}, tp.slots.map(function(c,i){
-          return h(Card,{key:c.id, size:'sm', slot:i+1,
-            onClick:function(){ Audio_.spy(); send({type:'SPY', seat:pick.seat, idx:i}); }});
-        })));
-    }
-    return h(Overlay,null, H2({},'Nine or ten — Spy'),
-      P({className:'sub'},'Look at one card belonging to somebody else.'),
-      div({className:'plist'}, others.map(function(p){
-        return btn({key:p.id, className:'prow', onClick:function(){ setPick({seat:p.seat}); }},
-          span({className:'emo'},p.emo), span({className:'nm'},p.name));
-      })));
-  }
-
-  if (kind === 'swapMine'){
-    if (pick.mine == null){
-      return h(Overlay,null, H2({},'Eleven or twelve — Swap'),
-        P({className:'sub'},'Blind. Pick one of yours first. You will not see either card.'),
-        div({className:'hand'}, me.hand.map(function(c,i){
-          return h(Card,{key:c.id, slot:i+1, onClick:function(){ Audio_.tap(); setPick({mine:i}); }});
-        })));
-    }
-    if (pick.seat == null){
-      return h(Overlay,null, H2({},'Swap with whom?'),
-        div({className:'plist'}, others.map(function(p){
-          return btn({key:p.id, className:'prow', onClick:function(){ setPick({mine:pick.mine, seat:p.seat}); }},
-            span({className:'emo'},p.emo), span({className:'nm'},p.name));
-        })));
-    }
-    var t2 = view.players.filter(function(p){ return p.seat===pick.seat; })[0];
-    return h(Overlay,null, H2({},'Which of ' + t2.name + '’s?'),
-      div({className:'hand'}, t2.slots.map(function(c,i){
-        return h(Card,{key:c.id, size:'sm', slot:i+1,
-          onClick:function(){ Audio_.swap(); send({type:'SWAP_DO', seat:pick.seat, mine:pick.mine, idx:i}); }});
-      })));
-  }
+  // spy and swap are aimed by tapping the table
+  if (kind === 'spyPick' || kind === 'swapMine') return null;
 
   if (kind === 'sting'){
-    var chosen = pick.list || [];
     if (others.length < 2)
       return h(Overlay,null, H2({},'Nobody to sting'),
         P({className:'sub'},'Sting needs two other people at the table.'),
         btn({className:'btn primary', onClick:close},'Fine'));
-    return h(Overlay,null,
-      H2({},'🐝  Sting'),
-      P({className:'sub'},'Pick two other people. They each hand over a card at random, to each other. You never learn what moved.'),
-      div({className:'plist'}, others.map(function(p){
-        var on = chosen.indexOf(p.seat)>=0;
-        return btn({key:p.id, className:'prow'+(on?' sel':''), onClick:function(){
-            Audio_.tap();
-            var l = chosen.slice(), k = l.indexOf(p.seat);
-            if (k>=0) l.splice(k,1); else if (l.length<2) l.push(p.seat); else return;
-            setPick({list:l});
-          }}, span({className:'emo'},p.emo), span({className:'nm'},p.name));
-      })),
-      btn({className:'btn primary', disabled:chosen.length!==2,
-           onClick:function(){ Audio_.sting(); send({type:'STING_DONE', a:chosen[0], b:chosen[1]}); }},
-        chosen.length===2 ? 'Sting them' : 'Pick two'),
-      btn({className:'btn ghost sm', onClick:close}, 'Never mind, save it'));
+    return null;                       // the two victims are tapped on the table
   }
 
-  if (kind === 'neck'){
-    // the top three arrived as a one-time reveal; the client holds them only
-    // for as long as this prompt is open
-    var cards = props.neckCards || [];
-    var order = pick.order || [];
-    if (!cards.length)
-      return h(Overlay,null, H2({},'Long Neck'),
-        P({className:'sub'},'Reloaded mid-look, so the cards are gone. That is the rule working, not a bug.'),
-        btn({className:'btn primary', onClick:close}, 'Fair'));
+  if (kind === 'slapGood'){
+    var n = view.you ? Math.max(0, 4 - view.you.hand.length) : 0;
+    var dish = DISHES[props.lastSlap] || null;
     return h(Overlay,null,
-      H2({},'🦒  Long Neck'),
-      P({className:'sub'},'Tap them in the order you want them dealt out — first tap comes off next.'),
-      div({className:'row', style:{gap:'10px'}},
-        cards.map(function(c,i){
-          var pos = order.indexOf(i);
-          return div({key:c.id, className:'stack center', style:{gap:'5px'}},
-            h(Card,{ face:true, v:c.v, sel:pos>=0, onClick:function(){
-              Audio_.neck();
-              var l=order.slice(), k=l.indexOf(i);
-              if(k>=0) l.splice(k,1); else l.push(i);
-              setPick({order:l});
-            }}),
-            span({className:'lbl', style:{fontSize:'11px', color:pos>=0?'var(--brass)':'var(--cream-dim)'}},
-              pos>=0 ? ('#'+(pos+1)) : '·'));
-        })),
-      btn({className:'btn primary', disabled:order.length!==cards.length,
-           onClick:function(){ send({type:'NECK_DONE', order: order.map(function(i){ return cards[i]; })}); }},
-        order.length===cards.length ? 'Put them back like that' : 'Tap all three'),
-      btn({className:'btn ghost sm', onClick:close}, 'Never mind, save it'));
+      div({style:{fontSize:'54px'}}, dish ? dish.emo : '✅'),
+      H2({}, dish ? dish.n.toUpperCase() : 'CLEAN'),
+      P({className:'sub'}, dish ? dish.b
+        : 'Gone. Your hand got smaller and your score got lower.'),
+      dish && dish.bonus ? P({style:{color:'var(--mint)', fontWeight:700}}, dish.bonus) : null,
+      btn({className:'btn primary', onClick:close}, 'Good'));
   }
-
-  if (kind === 'slapGood' || kind === 'slapBad' || kind === 'note' || kind === 'listenResult'){
+  if (kind === 'slapBad'){
     return h(Overlay,null,
-      H2({}, kind==='slapBad' ? 'WRONG' : kind==='slapGood' ? 'CLEAN' : 'Right'),
-      P({className:'sub'}, kind==='slapBad'
-        ? 'That was not a match. It comes back and you take a penalty card.'
-        : kind==='slapGood' ? 'Gone. Your hand got smaller and your score got lower.'
-        : 'Carry on.'),
+      div({style:{fontSize:'54px'}},'🤯'),
+      H2({style:{color:'var(--chili)'}},'WRONG'),
+      P({className:'sub'},'That was not a match. It comes back and you take a penalty card. You now have five.'),
+      btn({className:'btn danger', onClick:close},'Deserved'));
+  }
+  if (kind === 'note' || kind === 'listenResult'){
+    return h(Overlay,null, H2({},'Right'), P({className:'sub'},'Carry on.'),
       btn({className:'btn primary', onClick:close}, 'OK'));
   }
   return null;
@@ -641,11 +1162,89 @@ function RoundEnd(props){
             span({style:{fontFamily:'var(--f-num)', fontWeight:600, color:r.score===0?'var(--mint)':'var(--cream)'}},
               String(r.score))),
           div({className:'row', style:{gap:'6px'}},
-            (hands[r.id]||[]).map(function(c){ return h(Card,{key:c.id, face:true, v:c.v, size:'sm'}); })));
+            (hands[r.id]||[]).map(function(c){ return h(Card,{key:c.id, card:c, size:'sm'}); })));
       })),
     div({style:{flex:1}}),
     btn({className:'btn primary', onClick:props.next},
       view.round >= view.rounds ? 'See the final table' : 'Deal round ' + (view.round+1)));
+}
+
+/* ---------------------------------------------------- the recap
+   Read before the arithmetic. Nothing here is calculated by the client:
+   the server counts it off the move log, which is append-only, which is
+   why the recap can never disagree with what actually happened.
+
+   The Hush line is the good one. The record reporting a hole in itself is
+   funnier than anything it could report directly. */
+function Recap(props){
+  var r0 = useState(null), rec=r0[0], setRec=r0[1];
+  var e0 = useState(null), rerr=e0[0], setErr=e0[1];
+  useEffect(function(){
+    var alive = true;
+    API.recap(props.code, props.token).then(function(d){ if(alive) setRec(d); })
+      .catch(function(e){ if(alive) setErr(e.message); });
+    return function(){ alive = false; };
+  },[]);
+
+  var Line = function(k, mark, body){
+    return div({key:k, className:'tab-e'},
+      span({className:'rd'}, mark), span({}, body));
+  };
+
+  var lines = [];
+  if (rec){
+    if (rec.swept)
+      lines.push(Line('sw','🧹', [h('b',{key:'n'}, rec.swept.name), ' swept the floor ',
+        h('b',{key:'c'}, String(rec.swept.n)),
+        rec.swept.n === 1 ? ' time. ' : ' times. ',
+        rec.cardsKilled ? (rec.cardsKilled + ' cards died in there and nobody got them.') : '']));
+    if (rec.pickedOn && rec.pickedOn.n > 1)
+      lines.push(Line('po','🎯', [h('b',{key:'n'}, rec.pickedOn.name), ' was on the wrong end of ',
+        h('b',{key:'c'}, String(rec.pickedOn.n)), ' things. Nobody planned that. It just kept happening.']));
+    if (rec.caboCalls)
+      lines.push(Line('cb','🔔', [h('b',{key:'c'}, String(rec.caboCalls)),
+        rec.caboCalls === 1 ? ' Cabo call' : ' Cabo calls',
+        rec.busts.length
+          ? [' and ', h('b',{key:'b'}, String(rec.busts.length)), ' of them cost somebody ten points.']
+          : ' and every one of them stuck.']));
+    if (rec.redKings.length)
+      lines.push(Line('rk','👑', [
+        rec.redKings.map(function(k,i){
+          return h('b',{key:i}, (i ? ' and ' : '') + k.name);
+        }),
+        rec.redKings.length === 1
+          ? ' was holding a red king when the hands went face up. Worth minus one, and nobody swapped for it because nobody could see it.'
+          : ' were holding red kings when the hands went face up. Worth minus one each, and nobody swapped for them because nobody could see them.']));
+    if (rec.slowest && rec.slowest.hours >= 1)
+      lines.push(Line('sl','🐌', [h('b',{key:'n'}, rec.slowest.name), ' once sat on a turn for ',
+        h('b',{key:'h'}, rec.slowest.hours + (rec.slowest.hours === 1 ? ' hour' : ' hours')),
+        '. Weekends, presumably.']));
+    if (rec.skipped)
+      lines.push(Line('sk','⏳', [h('b',{key:'n'}, rec.skipped.name), ' had to be skipped ',
+        h('b',{key:'c'}, String(rec.skipped.n)),
+        rec.skipped.n === 1 ? ' time. ' : ' times. ',
+        'Never free on weekends.']));
+    if (rec.hushes)
+      lines.push(Line('hs','🤐', [h('b',{key:'c'}, String(rec.hushes)),
+        rec.hushes === 1 ? ' thing happened that nobody heard.' : ' things happened that nobody heard.',
+        ' The record knows the gap is there. It does not know what went in it.']));
+    if (rec.worstLine)
+      lines.push(Line('wl','📌', h('i',null, rec.worstLine)));
+  }
+
+  return div({className:'stack', style:{gap:'14px', flex:1}},
+    div({className:'stack center', style:{gap:'6px', paddingTop:'12px'}},
+      span({className:'eyebrow'}, 'Before anybody counts anything'),
+      H1({className:'title', style:{fontSize:'28px'}}, 'WHAT ACTUALLY HAPPENED')),
+    rerr ? div({className:'err'}, rerr) : null,
+    !rec && !rerr ? div({className:'wait'}, div({className:'spin'})) : null,
+    rec && lines.length
+      ? div({className:'stack', style:{gap:'0'}}, lines)
+      : (rec ? P({className:'hint'}, 'Three quiet rounds. Nobody did anything to anybody. That has never happened before and will not happen again.') : null),
+    rec ? P({className:'hint'}, rec.totalMoves + ' moves played. ' + rec.totalTab +
+      (rec.totalTab === 1 ? ' thing went on the Tab.' : ' things went on the Tab.')) : null,
+    div({style:{flex:1}}),
+    btn({className:'btn primary', onClick:props.onDone}, '📒  Settle the Tab'));
 }
 
 function MatchEnd(props){
@@ -671,10 +1270,13 @@ function MatchEnd(props){
         P({className:'muted', style:{fontSize:'14px', maxWidth:'28ch'}},
           base[0].t + ' points. Lowest wins. But nothing is final until the Tab is settled.')),
       div({style:{flex:1}}),
-      btn({className:'btn primary', onClick:function(){ Audio_.cabo(); setStage('settled'); }},
-        '📒  Settle the Tab'),
+      btn({className:'btn primary', onClick:function(){ Audio_.tap(); setStage('recap'); }},
+        '🗒️  What actually happened'),
       P({className:'hint'}, 'Everything anybody did to anybody has been counted the whole time. You just have not been shown the price.'));
   }
+
+  if (stage === 'recap') return h(Recap,{ code:props.code, token:props.token,
+    onDone:function(){ Audio_.cabo(); setStage('settled'); } });
 
   var w = rows[0];
   var changed = w.p.id !== leader.id;
@@ -701,6 +1303,105 @@ function MatchEnd(props){
     btn({className:'btn primary', onClick:function(){ location.href='/'; }}, 'New house'));
 }
 
+
+/* ---------------------------------------------------- the rule book
+   Six custom mechanics on top of a card game half the table has only
+   half-learned. Everything lives here, reachable from every screen. */
+function RuleBook(props){
+  var Row = function(k, label, body){
+    return div({key:k, className:'rule'},
+      div({className:'rule-k'}, label),
+      div({className:'rule-b'}, body));
+  };
+  var mini = function(c){ return h(Card, { card:c, size:'sm' }); };
+
+  return div({className:'drawer'},
+    div({className:'drawer-in'},
+      div({className:'topbar'},
+        span({className:'logo'}, '📖 HOW THIS WORKS'),
+        div({style:{flex:1}}),
+        btn({className:'icon-btn', onClick:props.close, 'aria-label':'Close'}, '✕')),
+
+      P({className:'muted', style:{fontSize:'14px', marginBottom:'16px'}},
+        'Lowest score wins. You hold four cards you cannot see, and the game is entirely about remembering what they are. ',
+        h('b',null,'Nothing here will ever show you a card twice.')),
+
+      span({className:'eyebrow'}, 'What the cards are worth'),
+      div({className:'rulebox'},
+        Row('v1', 'A', 'One.'),
+        Row('v2', '2-10', 'Face value.'),
+        Row('v3', 'J / Q', 'Eleven and twelve.'),
+        Row('v4', 'K ♠ ♣', 'Thirteen. The worst card in the deck.'),
+        Row('v5', 'K ♥ ♦', h('span',null,
+          h('b',{style:{color:'var(--mint)'}}, 'Minus one. '),
+          'The best card in the deck, and nothing on it says so. Look at the suit.'))),
+
+      span({className:'eyebrow'}, 'Powers, when you throw the card away'),
+      div({className:'rulebox'},
+        Row('p1', '7 · 8', h('span',null, h('b',null,'Peek'), ' at one of your own, or ', h('b',null,'Listen'),
+              ' instead, and learn one true thing about anybody’s card.')),
+        Row('p2', '9 · 10', h('span',null, h('b',null,'Spy'), ' on one card belonging to somebody else.')),
+        Row('p3', 'J · Q', h('span',null, h('b',null,'Swap'), ' blind, one of yours for one of theirs. Neither of you sees it.')),
+        Row('p4', 'Aiming', 'Everybody sits round the table with their four cards in front of them. When a power needs a target, the cards you are allowed to hit light up and you tap the one you mean. A Swap is two taps: yours, then theirs.')),
+
+      span({className:'eyebrow'}, 'On your turn, any turn'),
+      div({className:'rulebox'},
+        Row('t1', '🧹 Sweep', 'Once a round. Burn your whole turn to wipe the discard pile. You gain nothing; everybody loses whatever they were waiting to slap.'),
+        Row('t2', '👏 Slap', h('span',null,
+          'Tap your own face-down cards you believe match the rank on the discard, then slap. Right and they are gone. ',
+          h('b',null,'Wrong and you take a penalty card.'), ' Two at once is a Vada Pav, three a Misal, all four a Thali.')),
+        Row('t3', '📣 Cabo', h('span',null,
+          '“I am lowest, end the round.” Everyone else gets one last turn, then all hands flip. Right, you score ',
+          h('b',null,'zero'), '. Wrong, you score your hand ', h('b',null,'plus ten'), '.'))),
+
+      span({className:'eyebrow'}, 'Your animal, once a round'),
+      div({className:'rulebox'},
+        Row('a1', '🐝 Sting', 'Force two other people to blind-swap a card with each other. You never learn what moved.'),
+        Row('a2', '🦌 Bolt',  'Cancels the next power aimed at you. It simply does not happen.'),
+        Row('a3', '🐍 Shed',  'Secretly shuffle your own four positions. Everyone who spied on you is now confidently wrong.'),
+        Row('a4', '🦏 Charge','Take two actions back to back instead of one.'),
+        Row('a5', '🦒 Hush','Nothing you do for the rest of the turn is written to the Tab. It records that something happened and refuses to say what, so it cannot be charged to you at settlement.')),
+
+      span({className:'eyebrow'}, 'Taking turns'),
+      div({className:'rulebox'},
+        Row('n1', 'Whenever', 'Nobody has to be online at the same time. A link arrives in the group, you open it, you play, you close it. A round takes about two days.'),
+        Row('n2', 'The link', 'Always the same link for the whole room. Your phone remembers which seat is yours, so nothing personal is ever in a message.'),
+        Row('n3', 'Tell the group', h('span',null,
+          'When your turn ends the app opens WhatsApp with the message already written and you press send. ',
+          h('b',null,'It is written as you'),
+          ', not as the app: Roshan hands over without saying what he did, Shivani warns you her cards have moved, Hrutik reminds everybody he has been waiting. Nothing sends itself, which is deliberate and also unavoidable.')),
+        Row('n4', 'Nudge', 'When it is not your turn, the same button lets you chase whoever is holding things up. Nudges go on the Tab.'),
+        Row('n00', 'Watching', 'The table is on screen even when it is not your turn. If somebody plays while you have it open, their cards slide into their new places on your screen a few seconds later. You see the movement, never the faces, which is what you would see across a real table.'),
+        Row('n0', 'All at once', 'If everybody happens to be online together it plays like a normal game: your turn arrives by itself, no refreshing. A green dot means that person has it open right now. Close the tab and your phone stops asking.'),
+        Row('n5', '24 hours', 'A turn is expected inside a day. After that the waiting screen starts saying out loud how long it has been, and the nudge button gets harder to ignore. Nothing plays for you.'),
+        Row('n6', '48 hours', h('span',null,
+          'After two days anybody except the person holding things up can skip that turn. One card comes off the top and goes face up, no power fires, and the seat moves on. ',
+          h('b',null,'The skip goes on the Tab under their name, with everybody who waited on the other side of it'),
+          ', so it costs them at settlement. It takes two taps.'))),
+
+      span({className:'eyebrow'}, 'The Tab'),
+      P({className:'muted', style:{fontSize:'14px', lineHeight:'1.5', marginBottom:'18px'}},
+        'Every hostile thing anybody does to anybody is written down, permanently, and you can read it any time. ',
+        h('b',null,'What it costs stays hidden until the end of the match'),
+        ', then whoever is winning has a point taken off for every single thing they did to you.'),
+
+      span({className:'eyebrow'}, 'Remembering'),
+      div({className:'rulebox'},
+        Row('m1', 'Before it starts', 'Your opening look is not timed. Pick your two, then look at them as often as you like while you wait. The round only starts when everybody has said they are done. It is always the same two: asking for the other pair shows you the first one again.'),
+        Row('m1b', 'Once it starts', 'The house never remembers a card for you. A spy is one look, a peek is one look, and refreshing the page cannot show you either of them again. That is the game.'),
+        Row('m2', 'Your notes', h('span',null,
+          'Under each of your own four cards there is a small note you can write in. ',
+          h('b',null,'It never leaves your phone'),
+          ', it is not sent anywhere, and nobody else can see it. A piece of paper next to a real table, and everybody gets one.')),
+        Row('m3', 'Notes go stale', 'They are cleared every round, because a new round is a new hand. Within a round they are not touched, so if somebody swaps your slot 3 out from under you, your note about slot 3 is now a lie. That is not a bug.'),
+        Row('m4', 'Catching up', 'Open your turn after a day away and the table shows you what moved while you were gone before it lets you play. It shows you the movement, never the faces.')),
+
+      P({className:'hint', style:{textAlign:'left'}},
+        'The house never remembers a card for you. That is not a missing feature.'),
+      P({className:'hint', style:{textAlign:'left', opacity:.5, marginTop:'10px'}},
+        'Build ' + BUILD)));
+}
+
 function TabDrawer(props){
   var view = props.view;
   return div({className:'drawer'},
@@ -713,7 +1414,7 @@ function TabDrawer(props){
         'Everything anybody did to anybody, as it happens. What it costs stays hidden until the end.'),
       (view.tab||[]).length
         ? div({}, view.tab.map(function(e,i){
-            return div({key:i, className:'tab-e'}, span({className:'rd'}, e.r?('R'+e.r):'—'), span({}, e.t));
+            return div({key:i, className:'tab-e'}, span({className:'rd'}, e.r?('R'+e.r):' '), span({}, e.t));
           }))
         : P({className:'hint'}, 'Nothing yet. Give it a round.')));
 }
@@ -725,20 +1426,158 @@ function App(){
 
   var s1 = useState(null),  view=s1[0],  setView=s1[1];
   var s2 = useState(null),  info=s2[0],  setInfo=s2[1];
+  /* A seat request survives a reload: the token is useless until approved,
+     so parking it is safe, and losing it would mean asking the room twice. */
+  var pk = 'beeshouse:pending:';
+  var sp = useState(function(){
+    try { return code ? JSON.parse(localStorage.getItem(pk+code)||'null') : null; } catch(e){ return null; }
+  }), pending = sp[0], setPending = sp[1];
+  function savePending(pr){
+    try { localStorage.setItem(pk+code, JSON.stringify(pr)); } catch(e){}
+    setPending(pr);
+  }
+  function clearPending(){
+    try { localStorage.removeItem(pk+code); } catch(e){}
+    setPending(null);
+  }
+
   var s3 = useState(function(){ var v = code && Store.get(code); return v ? v.token : null; }),
       token=s3[0], setToken=s3[1];
   var s4 = useState(null),  err=s4[0],   setErr=s4[1];
   var s5 = useState(null),  reveal=s5[0],setReveal=s5[1];
   var s6 = useState(false), tab=s6[0],   setTab=s6[1];
-  var s7 = useState(null),  neck=s7[0],  setNeck=s7[1];
   var s8 = useState(false), busy=s8[0],  setBusy=s8[1];
   var s9 = useState(null),  handoff=s9[0], setHandoff=s9[1];
+  var lastSlap = useRef(0);
+  /* Which card or person you are part-way through choosing. It lives up
+     here because the table and what is left of the menus both read it now
+     that a power is aimed by tapping the table. Cleared whenever the game
+     moves to a different question. */
+  var pk0 = useState({}), pick = pk0[0], setPick = pk0[1];
+  useEffect(function(){ setPick({}); }, [view && view.modalKind, view && view.turn]);
+  var sR = useState(false), rules=sR[0], setRules=sR[1];
 
-  async function refresh(){
+  /* Animation needs three things React does not give us: the view as it was,
+     the card positions as they were, and a hook that fires after the repaint.
+     Refs hold the first two; useEffect is the third. */
+  var prevView = useRef(null);
+  var beforeBoxes = useRef({});
+  var shellRef = useRef(null);
+  var pendingFx = useRef(null);
+
+  /* ---- catching up ----------------------------------------------------
+     The animation works by diffing the table you were looking at against
+     the table you are looking at now. That is fine while you sit there,
+     and useless in a game played over two days, because you close the app
+     and come back to a mount with no memory of anything.
+
+     So the last table you saw is parked in this browser. On the first load
+     of a session, if the world moved while you were gone, the old table is
+     painted first, measured, and then released: every card that changed
+     hands since you last looked glides into its new place while you watch,
+     instead of the swap being a sentence in the briefing.
+
+     It is only ever your own view, so nothing is revealed that was not
+     already yours, and nothing can be played during it. */
+  var LASTVIEW = 'beeshouse:table:';
+  var firstLoad = useRef(true);
+  var c0 = useState(false), catchup=c0[0], setCatchup=c0[1];
+  function saveTable(v){
+    try { localStorage.setItem(LASTVIEW + code, JSON.stringify(v)); } catch(e){}
+  }
+  function lastTable(){
+    try { return JSON.parse(localStorage.getItem(LASTVIEW + code) || 'null'); }
+    catch(e){ return null; }
+  }
+  function worthReplaying(old, now){
+    return old && now && old.round === now.round
+        && old.phase === 'turn' && now.phase === 'turn'
+        && old.you && now.you && old.you.seat === now.you.seat
+        && old.version !== now.version
+        && Anim.diff(old, now).moved.length > 0;
+  }
+
+  /* Measure BEFORE React repaints. Called from the same place the new view
+     is set, which is the last moment the old layout still exists. */
+  function captureLayout(){
+    if (shellRef.current) beforeBoxes.current = Anim.measure(shellRef.current);
+  }
+
+  useEffect(function(){
+    if (!view) return;
+    var el = shellRef.current;
+    var d = Anim.diff(prevView.current, view);
+
+    // glide everything that changed position
+    Anim.flip(el, beforeBoxes.current);
+
+    if (d.swept){
+      var pile = el && el.querySelectorAll('.pile')[1];
+      Anim.sweepAway(pile);
+    }
+    if (d.cabo) Anim.caboPulse(el);
+
+    // a fresh round: deal the hand in
+    if (!prevView.current || prevView.current.round !== view.round) {
+      setTimeout(function(){ Anim.dealIn(el); }, 20);
+    }
+
+    // a card that arrived in your own hand lands with a settle
+    d.arrived.forEach(function(a){
+      if (!el) return;
+      var node = el.querySelector('[data-card="' + a.id + '"]');
+      if (node && node.closest('.hand')) Anim.settle(node);
+    });
+
+    prevView.current = view;
+    beforeBoxes.current = Anim.measure(el);
+    if (!catchup) saveTable(view);
+  }, [view]);
+
+  /* What makes a view worth repainting. A poll that finds nothing new must
+     not set state: it would re-render the board every few seconds for no
+     reason, and it would do it while somebody is halfway through typing a
+     note to themselves. */
+  function signature(v){
+    if (!v) return '';
+    return [v.version, v.phase, v.turn, v.round, v.allClaimed,
+            (v.seatRequests || []).length,
+            /* who has taken a seat: in the lobby this is the only thing that
+               changes as people arrive, and leaving it out meant the room
+               filled up without the screen ever noticing. */
+            (v.roster || []).map(function(r){ return r.claimed ? 1 : 0; }).join(''),
+            (v.presence || []).map(function(p){ return p.here ? 1 : 0; }).join('')].join('|');
+  }
+
+  async function refresh(isPoll){
     if (!code) return;
     try {
       if (!token){ setInfo(await API.roomInfo(code)); return; }
       var v = await API.state(code, token);
+
+      if (isPoll){
+        if (catchup) return;                       // mid-replay, leave it alone
+        if (signature(v) === signature(view)) { idleTicks.current++; return; }
+        idleTicks.current = 0;
+      }
+
+      if (firstLoad.current){
+        firstLoad.current = false;
+        var old = lastTable();
+        if (worthReplaying(old, v)){
+          setCatchup(true);
+          setView(old); setErr(null);
+          // paint the old table, let it land, then release the new one
+          setTimeout(function(){
+            captureLayout();
+            setCatchup(false);
+            setView(v);
+          }, 950);
+          return;
+        }
+      }
+
+      captureLayout();
       setView(v); setErr(null);
     } catch(e){
       if (e.status === 401){ Store.clear(code); setToken(null); setInfo(await API.roomInfo(code).catch(function(){return null;})); }
@@ -747,36 +1586,83 @@ function App(){
   }
 
   useEffect(function(){ refresh(); }, [code, token]);
-  // async play means staleness is cheap, so just re-check when you come back
+
+  /* ---- keeping up ------------------------------------------------------
+     The game was built for five people who are never free at the same time,
+     so for a long while it only looked at the server when you opened it.
+     That is correct for a turn taken on Tuesday, and wrong for the evening
+     when everybody happens to be online at once: your turn would arrive and
+     nothing on your screen would say so until you tapped something.
+
+     So it asks, but only while you are actually looking. A hidden tab polls
+     nothing, and a table where nothing has happened for a few minutes slows
+     right down, because five phones left open overnight should not sit there
+     hammering a free database until morning. Coming back to the tab resets
+     it to attentive. */
+  var idleTicks = useRef(0);
   useEffect(function(){
-    function onFocus(){ refresh(); }
-    window.addEventListener('focus', onFocus);
-    return function(){ window.removeEventListener('focus', onFocus); };
+    if (!code || !token) return;
+    var timer = null, stopped = false;
+
+    function delay(){
+      if (idleTicks.current < 12) return 5000;    // the first minute, brisk
+      if (idleTicks.current < 40) return 15000;   // then easing off
+      return 45000;                               // then barely there
+    }
+    function tick(){
+      if (stopped) return;
+      if (document.visibilityState === 'visible') refresh(true);
+      timer = setTimeout(tick, delay());
+    }
+    timer = setTimeout(tick, delay());
+
+    function wake(){
+      idleTicks.current = 0;
+      if (document.visibilityState === 'visible') refresh();
+    }
+    window.addEventListener('focus', wake);
+    document.addEventListener('visibilitychange', wake);
+    return function(){
+      stopped = true; clearTimeout(timer);
+      window.removeEventListener('focus', wake);
+      document.removeEventListener('visibilitychange', wake);
+    };
   }, [code, token]);
 
   async function send(move){
-    if (busy) return;
+    // the table is mid-replay and showing a state that is no longer true
+    if (busy || catchup) return;
     setBusy(true);
     try {
+      captureLayout();
+      if (move.type === 'SLAP_GO') lastSlap.current = (view.sel||[]).length;
       var r = await API.move(code, token, move, view ? view.version : null);
       setView(Object.assign({}, r.view, { briefing: view && view.briefing }));
       if (r.reveal){
-        if (r.reveal.kind === 'cards' && r.view.modalKind === 'neck') setNeck(r.reveal.cards);
         setReveal(r.reveal);
       }
       // turn just ended → offer the group nudge
       if (move.type === 'END_TURN' && r.view.phase === 'turn' && r.view.turn !== r.view.you.seat){
         var nx = r.view.players[r.view.turn];
         var url = location.origin + '/g/' + code;
-        var text = nx.emo + ' ' + nx.name + " — you're up in The Bee's House."
-                 + '\nRound ' + r.view.round + ' of ' + r.view.rounds + '.\n' + url;
-        setHandoff({ name: nx.name, emo: nx.emo, whatsapp: 'https://wa.me/?text=' + encodeURIComponent(text), text: text });
+        /* Written as you, not as the app. The app cannot send it anyway, so
+           the least it can do is sound like the person pressing send. */
+        var text = Voices.message('handoff', r.view.you.id,
+          { next: nx.name, url: url, salt: code + r.view.round + r.view.version });
+        setHandoff({ name: nx.name, emo: nx.emo,
+                     whatsapp: 'https://wa.me/?text=' + encodeURIComponent(text), text: text });
       }
       setErr(null);
     } catch(e){
       if (e.status === 409){ setErr(e.message); await refresh(); }
       else setErr(e.message);
     } finally { setBusy(false); }
+  }
+
+  async function skip(){
+    setBusy(true);
+    try { setView(await API.skip(code, token)); Audio_.sweep(); }
+    catch(e){ setErr(e.message); } finally { setBusy(false); }
   }
 
   async function next(){
@@ -787,53 +1673,85 @@ function App(){
   if (!code) return div({className:'shell'}, h(Home));
 
   if (!token){
+    if (pending) return div({className:'shell'},
+      h(TopBar,{code:code, onRules:function(){ setRules(true); }}),
+      h(SeatPending,{ code:code, token:pending.token, name:pending.name,
+        onIn:function(){ Store.set(code, { token:pending.token, seat:pending.seat });
+                         var t = pending.token; clearPending(); setToken(t); },
+        cancel:function(){ clearPending(); } }),
+      rules ? h(RuleBook,{ close:function(){ setRules(false); } }) : null);
+
     return div({className:'shell'},
-      h(TopBar,{code:code}),
+      h(TopBar,{code:code, onRules:function(){ setRules(true); }}),
       err ? div({className:'err'}, err) : null,
-      info ? h(SeatPicker,{ info:info, code:code, onClaimed:function(t){ setToken(t); } })
-           : div({className:'wait'}, div({className:'spin'})));
+      info ? h(SeatPicker,{ info:info, code:code,
+               onClaimed:function(t){ setToken(t); },
+               onPending:function(pr){ savePending(pr); } })
+           : div({className:'wait'}, div({className:'spin'})),
+      rules ? h(RuleBook,{ close:function(){ setRules(false); } }) : null);
   }
 
   if (!view) return div({className:'shell'}, h(TopBar,{code:code}),
     err ? div({className:'err'}, err) : div({className:'wait'}, div({className:'spin'})));
 
+  async function decideSeat(id, yes){
+    setBusy(true);
+    try { await API.seatDecide(code, token, id, yes); await refresh(); }
+    catch(e){ setErr(e.message); } finally { setBusy(false); }
+  }
+
   var body;
   if (view.allClaimed === false)
-    body = h(LobbyWait,{ view:view, code:code, refresh:refresh });
+    body = h(LobbyWait,{ view:view, code:code, token:token, refresh:refresh,
+                         onReveal:function(r){ setReveal(r); } });
   else if (view.phase === 'peek')
     body = h(PeekScreen,{ view:view, code:code, token:token, refresh:refresh,
                           onReveal:function(r){ setReveal(r); } });
   else if (view.phase === 'roundEnd') body = h(RoundEnd,{ view:view, next:next });
-  else if (view.phase === 'matchEnd') body = h(MatchEnd,{ view:view });
+  else if (view.phase === 'matchEnd') body = h(MatchEnd,{ view:view, code:code, token:token });
   else if (view.phase === 'turn')
-    body = view.yourTurn ? h(Board,{ view:view, send:send })
-                         : h(WaitScreen,{ view:view, refresh:refresh,
+    body = view.yourTurn ? h(Board,{ view:view, send:send, code:code, pick:pick, setPick:setPick })
+                         : h(WaitScreen,{ view:view, refresh:refresh, skip:skip, busy:busy,
+                             notes: Notes.all(code, view.round),
+                             onNote: function(i, t){ Notes.set(code, view.round, i, t); },
                              nudge: (function(){
                                var nx = view.players[view.turn]; if(!nx) return null;
                                var url = location.origin + '/g/' + code;
-                               var text = nx.emo + ' ' + nx.name + " — you're up in The Bee's House.\nRound "
-                                        + view.round + ' of ' + view.rounds + '.\n' + url;
-                               return { forName: nx.name, whatsapp:'https://wa.me/?text=' + encodeURIComponent(text) };
+                               /* past a day it gets a different set of
+                                  lines, because a nudge at hour two and a
+                                  nudge at hour thirty are different messages */
+                               var late = view.clock && view.clock.overdue;
+                               var text = Voices.message(late ? 'nudgeLate' : 'nudge', view.you.id,
+                                 { next: nx.name, url: url,
+                                   salt: code + view.round + (view.clock ? Math.floor(view.clock.hours) : 0) });
+                               return { forName: nx.name, text: text,
+                                        whatsapp:'https://wa.me/?text=' + encodeURIComponent(text) };
                              })() });
   else body = div({className:'wait'}, div({className:'spin'}));
 
-  return div({className:'shell'},
-    h(TopBar,{ code:code, round:view.round, rounds:view.rounds, onTab:function(){ setTab(true); } }),
+  return div({className:'shell', ref:shellRef},
+    h(TopBar,{ code:code, round:view.round, rounds:view.rounds,
+               onTab:function(){ setTab(true); }, onRules:function(){ Audio_.tap(); setRules(true); } }),
     err ? div({className:'err'}, err) : null,
+    catchup ? div({className:'catchup'}, 'Showing you what changed while you were gone') : null,
+    h(SeatRequests,{ requests:view.seatRequests, busy:busy, decide:decideSeat }),
     body,
     (view.yourTurn && view.modalKind && !reveal)
-      ? h(ChoiceModal,{ view:view, send:send, neckCards:neck }) : null,
+      ? h(ChoiceModal,{ view:view, send:send, lastSlap:lastSlap.current,
+                        pick:pick, setPick:setPick }) : null,
     reveal ? h(RevealOverlay,{ reveal:reveal, close:function(){ setReveal(null); } }) : null,
     handoff ? h(Overlay,null,
         div({style:{fontSize:'54px'}}, handoff.emo),
         H2({},'Turn passed'),
-        P({className:'sub'}, 'It’s ' + handoff.name + '’s move now. Send it to the group so they know — one tap.'),
+        P({className:'sub'}, handoff.name + ' is up.'),
         btn({className:'btn wa', onClick:function(){ window.open(handoff.whatsapp,'_blank'); setHandoff(null); }},
           'Tell the group'),
         btn({className:'btn ghost sm', onClick:function(){ setHandoff(null); }}, 'Skip')) : null,
-    tab ? h(TabDrawer,{ view:view, close:function(){ setTab(false); } }) : null);
+    tab ? h(TabDrawer,{ view:view, close:function(){ setTab(false); } }) : null,
+    rules ? h(RuleBook,{ close:function(){ setRules(false); } }) : null);
 }
 
+document.getElementById('svgdefs').innerHTML = Cards.defs();
 ReactDOM.createRoot(document.getElementById('app')).render(h(App));
 })();
 </script>
