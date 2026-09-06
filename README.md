@@ -369,18 +369,6 @@ nothing to 404, crisp at any size.
 
 ---
 
-## Still open
-
-- Seasons work end to end and have no UI
-- Direct nudges: phone numbers are stored, the nudge goes to the group by choice
-- **WhatsApp cannot be automated.** Meta's Groups API only reaches groups a
-  business creates, capped at 8 people, behind verification, and explicitly
-  cannot post to a group that already exists. The one-tap handoff is not a
-  compromise, it is the ceiling. Which turned out better anyway, because a
-  message a person sends can sound like that person.
-
----
-
 *Nobody has to be online at the same time. You get a link in the group, you open
 it, you play in eleven seconds, you close it. A round takes about two days.*
 
