@@ -3,8 +3,8 @@
 **Cabo, played one move at a time, across two days, by five people who are never free at once.**
 
 Built as a birthday present. Five friends, one card game, and the standing joke
-that Hrutik has been asking to play Cabo for two years and the group has been
-saying no for two years. So the game came to them: no scheduling, no video call,
+that Hrutik has been asking to play Cabo for almost forever and the group has been
+saying no for almost forever. So the game came to them: no scheduling, no video call,
 a link in the group chat and eleven seconds of your attention.
 
 > **Disclaimer.** All animals were assigned by Hrutik. No appeals were heard.
@@ -54,7 +54,6 @@ Everything interesting hangs off that red box.
 
 ---
 
-## The parts a senior engineer would actually poke at
 
 ### 1. The engine is a pure reducer, so it can be fuzzed
 
