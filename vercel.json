@@ -1,11 +1,13 @@
 {
   "rewrites": [
-    { "source": "/g/(.*)", "destination": "/index.html" }
+    { "source": "/g/(.*)", "destination": "/index.html" },
+    { "source": "/s/(.*)", "destination": "/index.html" }
   ],
   "headers": [
     { "source": "/api/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
     { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
     { "source": "/g/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
+    { "source": "/s/(.*)", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] },
     { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-store, must-revalidate" }] }
   ]
 }

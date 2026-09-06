@@ -11,7 +11,7 @@ a link in the group chat and eleven seconds of your attention.
 > **Disclaimer.** All animals were assigned by Hrutik. No appeals were heard.
 
 ```
-9,291 lines · 14 API routes · 14 node suites · 7 browser suites · 0 frameworks
+9,984 lines · 15 API routes · 13 node suites · 8 browser suites · 0 frameworks
 ```
 
 ---
@@ -174,6 +174,29 @@ aggregating season standings by `player_id` would have listed each person once
 per match. The animal is what identifies a person *across* matches. Only
 Postgres could surface it.
 
+### 7b. A season settles off the same rows the matches did
+
+A season is a running total plus one more settlement at the end: lowest total
+is ahead, then everybody deducts one point for every single thing that person
+did to them, across every match rather than the last one. It can flip the
+winner, which is the whole reason anybody keeps a tab.
+
+Nothing new is stored for it. The totals are `scores`, the debts are the same
+`moves` rows the match settlements counted, and `actor_id`/`victim_ids` have
+been *animals* since Phase 1, so nothing needs joining and **a season cannot
+settle in a way that contradicts a match inside it.**
+
+Hush falls out for free. A hushed row carries no actor and no victims, so it
+can never be billed at settlement, and the test asserts that rather than
+assuming it.
+
+The test for this had a hole worth recording. It recounted every debt straight
+off the Tab, which sounds airtight, and a deliberately sabotaged settlement
+that billed the leader's *entire* Tab to everybody **passed** — because a Cabo
+call already lists every other player as a victim, so with three players the
+two readings coincide. The fix is one planted Tab row aimed at exactly one
+person, and an assertion that the bystanders' debts do not move.
+
 ### 8. The client cannot run the reducer, so animation is a diff
 
 Strict redaction has a consequence people miss: **the client cannot simulate.**
@@ -308,6 +331,20 @@ and the correct answer.
 **Nothing is ever deleted.** `moves` is append-only, seat requests keep their
 whole history including denials, and every round of every match is written to
 `scores` even when the Tab settles per match.
+
+**A season is offered at the only moment anybody can answer.** Nobody knows
+whether they want five matches before they have played one, so the offer is
+not on the home screen. It appears once the Tab has settled, and the match you
+just finished becomes match 1 rather than sitting outside its own season.
+
+The season screen is reachable two ways, and the second one is the reason it
+works: `/s/CODE` needs no seat and no token, because the person opening it is
+usually somebody scrolling a group chat, not somebody holding a turn.
+
+**Dealing the next match is written to be pressed five times.** It is the one
+button in the app that five phones will hit within the same second, so it does
+not create anything if an unfinished later match already exists. Everybody
+lands in the same room instead of four of them dealing four.
 
 ---
 

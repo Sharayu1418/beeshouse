@@ -608,3 +608,19 @@ p{margin:0}
 .rule-k{font-family:var(--f-num);font-weight:700;font-size:15px;color:var(--brass);line-height:1.25}
 .rule-b{font-size:14px;line-height:1.5;color:var(--cream-dim)}
 .rule-b b{color:var(--cream);font-weight:600}
+
+/* ---------- seasons ----------
+   A season needs almost no chrome of its own: the standings are the score
+   table the round already uses, and the lines under them are Tab entries.
+   Only two things are actually new — a row of pips for how far through the
+   season the table is, and a selected state on the ghost buttons that pick
+   its length. */
+.scores th.n{text-align:right}
+.pips{display:flex;gap:6px;justify-content:center;padding:2px 0 2px}
+.pip{
+  width:8px;height:8px;border-radius:99px;
+  border:1px solid var(--line);background:transparent;
+  transition:background .2s ease, border-color .2s ease;
+}
+.pip.on{background:var(--brass);border-color:var(--brass)}
+.btn.ghost.on{border-color:var(--brass);color:var(--brass);background:rgba(227,167,47,.08)}

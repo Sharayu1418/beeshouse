@@ -23,7 +23,8 @@ const ROUTES = {
   '/api/skip':       require('./api/skip.js'),
   '/api/seat-request': require('./api/seat-request.js'),
   '/api/seat-decide':  require('./api/seat-decide.js'),
-  '/api/phone':      require('./api/phone.js')
+  '/api/phone':      require('./api/phone.js'),
+  '/api/next-match': require('./api/next-match.js')
 };
 
 const MIME = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8',
@@ -38,7 +39,7 @@ http.createServer(async (req, res) => {
   if (ROUTES[p]) return ROUTES[p](req, res);
 
   // /g/CODE is the room link everyone gets in WhatsApp — same page
-  let file = p === '/' || p.startsWith('/g/') ? '/index.html' : p;
+  let file = p === '/' || p.startsWith('/g/') || p.startsWith('/s/') ? '/index.html' : p;
   const full = path.join(__dirname, 'public', file);
   if (!full.startsWith(path.join(__dirname, 'public'))) { res.statusCode = 403; return res.end('no'); }
   fs.readFile(full, (err, buf) => {

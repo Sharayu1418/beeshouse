@@ -53,7 +53,7 @@ is a UUID foreign key, and player rows are **per game**. Aggregating by
 identifies a person across matches, so writes use the real UUID and the
 standings query joins back for the animal.
 
-Still to do: a screen. `POST /api/season` starts one and returns standings.
+Built in Phase 3. See `plan-phase3.md`.
 
 ---
 
@@ -94,5 +94,4 @@ act.
 
 ## What is left
 
-- A season screen
 - Direct nudges, if the group ever wants them instead of the group chat

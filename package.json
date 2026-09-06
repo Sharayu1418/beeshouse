@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node server.js",
     "test": "node test/engine.fuzz.js && node test/redact.test.js && node test/db.test.js && node test/service.test.js && node test/cards.test.js && node test/anim.test.js && node test/replay.test.js && node test/season.test.js && node test/recap.test.js && node test/clock.test.js && node test/seat.test.js && node test/peek.test.js && node test/voices.test.js",
-    "test:browser": "node test/home.browser.js && node test/browser.test.js && node test/recap.browser.js && node test/clock.browser.js && node test/seat.browser.js && node test/notes.browser.js && node test/live.browser.js && node test/table.browser.js"
+    "test:browser": "node test/home.browser.js && node test/browser.test.js && node test/recap.browser.js && node test/clock.browser.js && node test/seat.browser.js && node test/notes.browser.js && node test/live.browser.js && node test/table.browser.js && node test/season.browser.js"
   },
   "keywords": [],
   "author": "",

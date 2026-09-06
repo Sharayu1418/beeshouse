@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=20260906-0256">
+<link rel="stylesheet" href="/style.css?v=20260906-0612">
 </head>
 <body>
 <div id="app"></div>
@@ -16,10 +16,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js?v=20260906-0256"></script>
-<script src="/cards.js?v=20260906-0256"></script>
-<script src="/anim.js?v=20260906-0256"></script>
-<script src="/voices.js?v=20260906-0256"></script>
+<script src="/engine.js?v=20260906-0612"></script>
+<script src="/cards.js?v=20260906-0612"></script>
+<script src="/anim.js?v=20260906-0612"></script>
+<script src="/voices.js?v=20260906-0612"></script>
 <script>
 (function () {
 'use strict';
@@ -35,7 +35,7 @@
 /* Which build you are actually looking at. Shown at the foot of the rule
    book and put on window, because "have I really got the new one" was
    guesswork for an afternoon and it should be a five second answer. */
-var BUILD = '20260906-0256';
+var BUILD = '20260906-0612';
 try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
@@ -98,7 +98,10 @@ var API = {
   recap:      function(code, token){ return api('/api/recap?code='+encodeURIComponent(code)+'&token='+encodeURIComponent(token)); },
   skip:       function(code, token){ return api('/api/skip', { method:'POST', body: JSON.stringify({code:code, token:token}) }); },
   seatRequest:function(code, seat){ return api('/api/seat-request', { method:'POST', body: JSON.stringify({code:code, seat:seat}) }); },
-  seatDecide: function(code, token, requestId, approve){ return api('/api/seat-decide', { method:'POST', body: JSON.stringify({code:code, token:token, requestId:requestId, approve:approve}) }); }
+  seatDecide: function(code, token, requestId, approve){ return api('/api/seat-decide', { method:'POST', body: JSON.stringify({code:code, token:token, requestId:requestId, approve:approve}) }); },
+  season:     function(code){ return api('/api/season?code='+encodeURIComponent(code)); },
+  makeSeason: function(code, token, opts){ return api('/api/season', { method:'POST', body: JSON.stringify(Object.assign({fromCode:code, token:token}, opts||{})) }); },
+  nextMatch:  function(code, token){ return api('/api/next-match', { method:'POST', body: JSON.stringify({code:code, token:token}) }); }
 };
 
 /* ---------------------------------------------------- audio (unchanged from Phase 0) */
@@ -1247,6 +1250,258 @@ function Recap(props){
     btn({className:'btn primary', onClick:props.onDone}, '📒  Settle the Tab'));
 }
 
+/* ---------------------------------------------------- the season
+   A season is the same people playing several matches, and the only thing
+   it adds is that nothing resets. The Tab still settles inside every match;
+   this settles once more on top of all of them, at the very end.
+
+   Reachable two ways. From the end of a match, where you are holding a
+   seat, and at /s/CODE, which is the link that goes in the group chat and
+   needs nothing at all. Same screen either way, minus the buttons only a
+   player can press.
+
+   Nothing here is computed by the client. The standings are a query over
+   `scores` and every line under them is a query over `moves`, so a season
+   cannot say something a match disagreed with. */
+function Season(props){
+  var d0 = useState(null),   data=d0[0],  setData=d0[1];
+  var e0 = useState(null),   serr=e0[0],  setErr=e0[1];
+  var s0 = useState('table'),stage=s0[0], setStage=s0[1];
+  var b0 = useState(false),  busy=b0[0],  setBusy=b0[1];
+
+  useEffect(function(){
+    var alive = true;
+    API.season(props.code).then(function(d){ if(alive) setData(d); })
+      .catch(function(e){ if(alive) setErr(e.message); });
+    return function(){ alive = false; };
+  }, [props.code]);
+
+  async function next(){
+    setBusy(true); setErr(null);
+    try { var r = await API.nextMatch(props.code, props.token); location.href = '/g/' + r.code; }
+    catch(e){ setErr(e.message); setBusy(false); }
+  }
+
+  if (serr) return div({className:'stack center', style:{gap:'14px', flex:1, justifyContent:'center'}},
+    div({style:{fontSize:'46px'}}, '🐝'),
+    div({className:'err'}, serr),
+    btn({className:'btn ghost sm', onClick:function(){ location.href='/'; }}, 'Home'));
+  if (!data) return div({className:'wait'}, div({className:'spin'}));
+
+  var done = data.status === 'done';
+  var x = data.extras || {};
+  var seasonUrl = location.origin + '/s/' + data.code;
+
+  /* ---- the settlement, in the shape the table already understands ---- */
+  if (stage === 'settled' && data.settlement){
+    var st = data.settlement;
+    var debts = st.rows.filter(function(r){ return r.owed > 0; });
+    return div({className:'stack', style:{gap:'16px', flex:1}},
+      div({className:'stack center', style:{gap:'6px', paddingTop:'10px'}},
+        span({className:'eyebrow'}, 'The season settles'),
+        P({style:{fontSize:'14.5px', maxWidth:'32ch', color:'var(--cream-dim)'}},
+          st.leader.name + ' finished ahead across ' + data.matchesPlayed +
+          ' matches. Everyone now takes one point off for every single thing ' +
+          st.leader.name + ' did to them in any of them.')),
+      debts.length
+        ? div({className:'stack', style:{gap:'0'}}, debts.map(function(r){
+            return div({key:r.animal, className:'tab-e'},
+              span({className:'rd'}, '−'+r.owed),
+              span({}, h('b',null,r.name), ' was on the wrong end of ', h('b',null,String(r.owed)),
+                r.owed===1 ? ' thing all season.' : ' things all season.'));
+          }))
+        : P({className:'hint'}, st.leader.name +
+            ' got through an entire season without bothering anybody. Nobody believes that either.'),
+      div({className:'stack center', style:{gap:'6px'}},
+        div({style:{fontSize:'56px'}}, st.winner.emo),
+        span({className:'eyebrow'}, st.changed ? 'The Tab changed the season' : 'The Tab held'),
+        H1({className:'title', style:{fontSize:'32px'}}, st.winner.name.toUpperCase()),
+        P({className:'muted', style:{fontSize:'14px'}}, st.winner.final + ' points after settlement.')),
+      div({style:{flex:1}}),
+      btn({className:'btn ghost sm', onClick:function(){ Audio_.tap(); setStage('table'); }},
+        'Back to the table'),
+      btn({className:'btn primary', onClick:function(){ location.href='/'; }}, 'New house'));
+  }
+
+  /* ---- the standings, and what the season looked like from outside ---- */
+  var Line = function(k, mark, body){
+    return div({key:k, className:'tab-e'}, span({className:'rd'}, mark), span({}, body));
+  };
+  var lines = [];
+  if (x.swept)
+    lines.push(Line('sw','🧹', [h('b',{key:'n'}, x.swept.name), ' swept the floor ',
+      h('b',{key:'c'}, String(x.swept.n)), x.swept.n===1 ? ' time' : ' times', ' this season. ',
+      x.cardsKilled ? (x.cardsKilled + ' cards died in there and nobody ever got them back.') : '']));
+  if (x.pickedOn && x.pickedOn.n > 1)
+    lines.push(Line('po','🎯', [h('b',{key:'n'}, x.pickedOn.name), ' has been on the wrong end of ',
+      h('b',{key:'c'}, String(x.pickedOn.n)), ' things. Across every match. Nobody is coordinating it.']));
+  if (x.stung)
+    lines.push(Line('sg','🐝', [h('b',{key:'n'}, x.stung.name), ' stung people ',
+      h('b',{key:'c'}, String(x.stung.n)),
+      x.stung.n===1 ? ' time and learned nothing from it.' : ' times and learned nothing from any of them.']));
+  if (x.worstCaller)
+    lines.push(Line('cb','🔔', [h('b',{key:'n'}, x.worstCaller.name), ' called Cabo ',
+      h('b',{key:'c'}, String(x.worstCaller.called)), ' times and missed ',
+      h('b',{key:'m'}, String(x.worstCaller.missed)), ' of them. Ten points each.']));
+  else if (x.caboCalled)
+    lines.push(Line('cb','🔔', [h('b',{key:'n'}, x.caboCalled.name), ' called Cabo ',
+      h('b',{key:'c'}, String(x.caboCalled.n)), ' times and got away with every one.']));
+  if (x.emptied)
+    lines.push(Line('em','🎯', [h('b',{key:'n'}, x.emptied.name), ' emptied their hand ',
+      h('b',{key:'c'}, String(x.emptied.n)), x.emptied.n===1 ? ' time.' : ' times.',
+      ' Ends the round, scores nothing, infuriating.']));
+  if (x.skipped)
+    lines.push(Line('sk','⏳', [h('b',{key:'n'}, x.skipped.name), ' had to be skipped ',
+      h('b',{key:'c'}, String(x.skipped.n)), x.skipped.n===1 ? ' time' : ' times',
+      '. Never free on weekends.']));
+  if (x.hushes)
+    lines.push(Line('hs','🤐', [h('b',{key:'c'}, String(x.hushes)),
+      x.hushes===1 ? ' thing happened all season that nobody heard.'
+                   : ' things happened all season that nobody heard.',
+      ' The record knows the gaps are there. It still does not know what went in them.']));
+
+  var pips = [];
+  for (var i = 0; i < data.matchTarget; i++) {
+    pips.push(span({ key:i, className:'pip' + (i < data.matchesPlayed ? ' on' : '') }));
+  }
+
+  return div({className:'stack', style:{gap:'14px', flex:1}},
+    div({className:'stack center', style:{gap:'6px', paddingTop:'12px'}},
+      span({className:'eyebrow'}, done ? 'The season is over' : 'A season is running'),
+      H1({className:'title', style:{fontSize:'28px'}}, (data.name || 'The Season').toUpperCase()),
+      div({className:'pips'}, pips),
+      P({className:'muted', style:{fontSize:'13px'}},
+        data.matchesPlayed + ' of ' + data.matchTarget + ' matches played' +
+        (done ? '. Nothing left to reset.' : '. Nothing resets in between.'))),
+
+    serr ? div({className:'err'}, serr) : null,
+
+    data.standings.length
+      ? h('table', {className:'scores'},
+          h('thead', null, h('tr', null,
+            h('th', null, 'Standing'),
+            h('th', {className:'n'}, 'Matches'),
+            h('th', {className:'n'}, 'Total'))),
+          h('tbody', null, data.standings.map(function(r, i){
+            return h('tr', {key:r.animal, className: i===0 ? 'lead' : null},
+              h('td', null, div({className:'who'}, span({style:{fontSize:'17px'}}, r.emo), r.name)),
+              h('td', {className:'n'}, String(r.matches)),
+              h('td', {className:'n'}, String(r.total)));
+          })))
+      : P({className:'hint'}, 'Nothing has finished yet. The table fills in as matches end.'),
+
+    data.standings.length
+      ? P({className:'hint'}, 'Lowest wins. Totals carry, and nothing is final until the season settles.')
+      : null,
+
+    lines.length
+      ? div({className:'stack', style:{gap:'0'}},
+          div({className:'stack center', style:{gap:'4px', padding:'10px 0 2px'}},
+            span({className:'eyebrow'}, 'Across the season')),
+          lines)
+      : null,
+
+    (data.games || []).length
+      ? div({className:'stack', style:{gap:'0'}},
+          div({className:'stack center', style:{gap:'4px', padding:'10px 0 2px'}},
+            span({className:'eyebrow'}, 'The matches')),
+          data.games.map(function(g){
+            return div({key:g.code, className:'tab-e'},
+              span({className:'rd'}, '#'+g.matchNo),
+              span({}, g.status === 'done'
+                ? ['Match ', h('b',{key:'m'}, String(g.matchNo)), ' is finished.']
+                : ['Match ', h('b',{key:'m'}, String(g.matchNo)), ' is still going. ',
+                   a_({key:'a', href:'/g/'+g.code, style:{color:'var(--brass)', fontWeight:600}},
+                      'Open it')]));
+          }))
+      : null,
+
+    div({style:{flex:1, minHeight:'10px'}}),
+
+    (done && data.settlement)
+      ? btn({className:'btn primary', onClick:function(){ Audio_.cabo(); setStage('settled'); }},
+          '📒  Settle the season')
+      : (props.token
+          ? btn({className:'btn primary', disabled:busy, onClick:next},
+              busy ? 'Dealing…' : '🃏  Deal match ' + (data.matchesStarted + 1))
+          : null),
+    btn({className:'btn ghost sm', onClick:function(){
+        window.open('https://wa.me/?text=' + encodeURIComponent(
+          'Season standings. ' + seasonUrl), '_blank');
+      }}, 'Send the group the table'),
+    props.onBack ? btn({className:'btn ghost sm', onClick:props.onBack}, 'Back') : null);
+}
+
+/* The season link. Goes in the group chat, needs no seat and no token. */
+function SeasonPage(props){
+  var r0 = useState(false), rules=r0[0], setRules=r0[1];
+  return div({className:'shell'},
+    div({className:'topbar'},
+      span({className:'logo'}, '🐝 ', span({className:'long'}, 'THE BEE’S '), 'HOUSE'),
+      div({style:{flex:1}}),
+      span({className:'chip'}, props.code),
+      btn({className:'icon-btn', 'aria-label':'How this works',
+           onClick:function(){ setRules(true); }}, '📖')),
+    h(Season, { code: props.code, token: null }),
+    rules ? h(RuleBook,{ close:function(){ setRules(false); } }) : null);
+}
+
+/* What happens once the Tab has settled. Without a season this is where one
+   gets offered, because it is the only moment anybody actually knows whether
+   they want more matches: they have just finished one. */
+function AfterMatch(props){
+  var view = props.view;
+  var m0 = useState('idle'), mode=m0[0], setMode=m0[1];
+  var t0 = useState(5),      target=t0[0], setTarget=t0[1];
+  var b0 = useState(false),  busy=b0[0],   setBusy=b0[1];
+  var e0 = useState(null),   aerr=e0[0],   setErr=e0[1];
+
+  async function makeSeason(){
+    setBusy(true); setErr(null);
+    try { await API.makeSeason(props.code, props.token, { matchTarget: target });
+          Audio_.cabo(); props.onSeason(); }
+    catch(e){ setErr(e.message); setBusy(false); }
+  }
+  async function next(){
+    setBusy(true); setErr(null);
+    try { var r = await API.nextMatch(props.code, props.token); location.href = '/g/' + r.code; }
+    catch(e){ setErr(e.message); setBusy(false); }
+  }
+
+  if (view.season){
+    var s = view.season, over = s.status === 'done';
+    return div({className:'stack', style:{gap:'10px'}},
+      aerr ? div({className:'err'}, aerr) : null,
+      P({className:'hint'}, over
+        ? 'That was match ' + s.matchNo + ' of ' + s.target + '. The season is over.'
+        : 'Match ' + s.matchNo + ' of ' + s.target + '. Nothing resets.'),
+      over
+        ? btn({className:'btn primary', onClick:props.onSeason}, '🏆  How the season ended')
+        : btn({className:'btn primary', disabled:busy, onClick:next},
+            busy ? 'Dealing…' : '🃏  Deal match ' + (s.matchNo + 1)),
+      btn({className:'btn ghost sm', onClick:props.onSeason}, 'Season standings'));
+  }
+
+  if (mode === 'pick'){
+    return div({className:'stack', style:{gap:'10px'}},
+      aerr ? div({className:'err'}, aerr) : null,
+      P({className:'hint'}, 'This one becomes match one. Totals stop resetting, and the Tab settles again at the end over all of it.'),
+      div({className:'row', style:{gap:'8px', justifyContent:'center'}},
+        [3,5,10].map(function(n){
+          return btn({key:n, className:'btn ghost sm' + (target===n ? ' on' : ''),
+                      onClick:function(){ Audio_.tap(); setTarget(n); }}, n + ' matches');
+        })),
+      btn({className:'btn primary', disabled:busy, onClick:makeSeason},
+        busy ? 'Starting…' : 'Start a season of ' + target),
+      btn({className:'btn ghost sm', onClick:function(){ setMode('idle'); }}, 'Never mind'));
+  }
+
+  return div({className:'stack', style:{gap:'10px'}},
+    btn({className:'btn primary', onClick:function(){ Audio_.tap(); setMode('pick'); }},
+      '🏆  Make this a season'),
+    btn({className:'btn ghost sm', onClick:function(){ location.href='/'; }}, 'New house'));
+}
+
 function MatchEnd(props){
   var view = props.view;
   var st = useState('standings'), stage=st[0], setStage=st[1];
@@ -1300,7 +1555,7 @@ function MatchEnd(props){
       H1({className:'title', style:{fontSize:'32px'}}, w.p.name.toUpperCase()),
       P({className:'muted', style:{fontSize:'14px'}}, w.final + ' points after settlement.')),
     div({style:{flex:1}}),
-    btn({className:'btn primary', onClick:function(){ location.href='/'; }}, 'New house'));
+    h(AfterMatch, { view:view, code:props.code, token:props.token, onSeason:props.onSeason }));
 }
 
 
@@ -1456,6 +1711,10 @@ function App(){
   var pk0 = useState({}), pick = pk0[0], setPick = pk0[1];
   useEffect(function(){ setPick({}); }, [view && view.modalKind, view && view.turn]);
   var sR = useState(false), rules=sR[0], setRules=sR[1];
+  /* The season standings, opened from the end of a match. It is a stage of
+     this screen rather than a navigation, so coming back does not re-deal
+     anything or lose the seat this device is holding. */
+  var sSn = useState(false), seasonOpen=sSn[0], setSeasonOpen=sSn[1];
 
   /* Animation needs three things React does not give us: the view as it was,
      the card positions as they were, and a hook that fires after the repaint.
@@ -1701,14 +1960,19 @@ function App(){
   }
 
   var body;
-  if (view.allClaimed === false)
+  if (seasonOpen)
+    body = h(Season, { code:code, token:token,
+                       onBack:function(){ setSeasonOpen(false); refresh(); } });
+  else if (view.allClaimed === false)
     body = h(LobbyWait,{ view:view, code:code, token:token, refresh:refresh,
                          onReveal:function(r){ setReveal(r); } });
   else if (view.phase === 'peek')
     body = h(PeekScreen,{ view:view, code:code, token:token, refresh:refresh,
                           onReveal:function(r){ setReveal(r); } });
   else if (view.phase === 'roundEnd') body = h(RoundEnd,{ view:view, next:next });
-  else if (view.phase === 'matchEnd') body = h(MatchEnd,{ view:view, code:code, token:token });
+  else if (view.phase === 'matchEnd')
+    body = h(MatchEnd,{ view:view, code:code, token:token,
+                        onSeason:function(){ refresh(); setSeasonOpen(true); } });
   else if (view.phase === 'turn')
     body = view.yourTurn ? h(Board,{ view:view, send:send, code:code, pick:pick, setPick:setPick })
                          : h(WaitScreen,{ view:view, refresh:refresh, skip:skip, busy:busy,
@@ -1730,7 +1994,10 @@ function App(){
   else body = div({className:'wait'}, div({className:'spin'}));
 
   return div({className:'shell', ref:shellRef},
-    h(TopBar,{ code:code, round:view.round, rounds:view.rounds,
+    /* On the season the round counter is a fact about a match nobody is
+       currently looking at, so the chip carries the season instead. */
+    h(TopBar,{ code: seasonOpen && view.season ? view.season.code : code,
+               round: seasonOpen ? null : view.round, rounds:view.rounds,
                onTab:function(){ setTab(true); }, onRules:function(){ Audio_.tap(); setRules(true); } }),
     err ? div({className:'err'}, err) : null,
     catchup ? div({className:'catchup'}, 'Showing you what changed while you were gone') : null,
@@ -1751,8 +2018,16 @@ function App(){
     rules ? h(RuleBook,{ close:function(){ setRules(false); } }) : null);
 }
 
+/* Two pages live at this bundle: a room, and a season. The split is here
+   rather than inside App so neither one runs the other's hooks. */
+function Root(){
+  var sm = location.pathname.match(/^\/s\/([A-Za-z0-9]+)/);
+  if (sm) return h(SeasonPage, { code: sm[1].toUpperCase() });
+  return h(App);
+}
+
 document.getElementById('svgdefs').innerHTML = Cards.defs();
-ReactDOM.createRoot(document.getElementById('app')).render(h(App));
+ReactDOM.createRoot(document.getElementById('app')).render(h(Root));
 })();
 </script>
 </body>
