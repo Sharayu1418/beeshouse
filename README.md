@@ -1,8 +1,9 @@
 # 🐝 The Bee's House
 
 **Cabo, played one move at a time, across two days, by five people who are never free at once.**
+**Link: https://bee-house.vercel.app/**
 
-Built as a birthday present. Five friends, one card game, and the standing joke
+Five friends, one card game, and the standing joke
 that Hrutik has been asking to play Cabo for almost forever and the group has been
 saying no for almost forever. So the game came to them: no scheduling, no video call,
 a link in the group chat and eleven seconds of your attention.
