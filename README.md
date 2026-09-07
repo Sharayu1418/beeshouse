@@ -10,10 +10,6 @@ a link in the group chat and eleven seconds of your attention.
 
 > **Disclaimer.** All animals were assigned by Hrutik. No appeals were heard.
 
-```
-9,984 lines · 15 API routes · 13 node suites · 8 browser suites · 0 frameworks
-```
-
 ---
 
 ## The one idea worth stealing
