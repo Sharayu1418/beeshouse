@@ -188,7 +188,7 @@ assuming it.
 
 The test for this had a hole worth recording. It recounted every debt straight
 off the Tab, which sounds airtight, and a deliberately sabotaged settlement
-that billed the leader's *entire* Tab to everybody **passed** — because a Cabo
+that billed the leader's *entire* Tab to everybody **passed**, because a Cabo
 call already lists every other player as a victim, so with three players the
 two readings coincide. The fix is one planted Tab row aimed at exactly one
 person, and an assertion that the bystanders' debts do not move.
@@ -269,6 +269,7 @@ Each of these was a real failure, and each has a test now.
 | **Lobby deadlock** | A 5-seat room with 2 claimed sat in the peek phase forever | Lobby gate, and later: everyone confirms ready |
 | **Half-open turn** | Modals could dead-end with a thin deck or too few opponents | Guards plus a "never mind" on every branch |
 | **`POSTGRES_URL` vs `DATABASE_URL`** | Vercel injects the former. Serverless would have silently used in-memory storage, forgetting every game between requests | Accept both, and shout on boot if neither is present in production |
+| **A migration that existed and had never run** | `schema.sql` gained `alter table games add column if not exists finished_at` in Phase 2. `setup-db.js` applies it. Nobody ran `setup-db.js` again, so the live database never got the column, and every match that reached its end would have thrown on the write. It survived because **no match had been finished on the live database yet** | Run the suite against the real thing. That is the only reason this was found before five people were mid-match |
 | **`REVOKE ... FROM anon`** | A Supabase-ism. The role does not exist on Neon, and Postgres aborts the entire script | Conditional on `pg_roles` |
 | **Cache** | Only `/api/*` was `no-store`. Deploys were invisible for a day | `no-store` on the page, `?v=<build>` on every asset, and a build stamp in the rule book so "am I on the new one" is a five-second question |
 | **Listen desync** | The client sent a question *index* while displaying a stale list, so you were truthfully answered a question you did not ask | The list ships with the game state |
@@ -332,6 +333,17 @@ and the correct answer.
 whole history including denials, and every round of every match is written to
 `scores` even when the Tab settles per match.
 
+**One group, one game.** Pressing Yes while a game is running takes you into
+that game rather than dealing a second one, because five people split across
+two rooms is not two games, it is nought, and it takes about a day to notice.
+The policy lives at the door, not in `createRoom`, which stays a primitive: a
+season's next match is allowed to open a room precisely because the previous
+one has finished.
+
+The cost is a single piece of global state that can stop everybody, so a room
+nobody has touched in a week stops blocking, and `tools/rooms.js` exists to
+say which room is holding the door when somebody is not willing to wait.
+
 **A season is offered at the only moment anybody can answer.** Nobody knows
 whether they want five matches before they have played one, so the offer is
 not on the home screen. It appears once the Tab has settled, and the match you
@@ -360,11 +372,23 @@ npm run test:browser   # 7 Playwright suites, each boots its own server
 Against a real database:
 
 ```bash
+node setup-db.js                       # first, or the schema may be behind
 DATABASE_URL="postgresql://..." npm test
 ```
 
 The two-adapter suites detect `DATABASE_URL` and run **twice**, once per
-backend. Skipping that is how the UUID bug survived a week.
+backend. Skipping that is how the UUID bug survived a week, and skipping it
+again is how a column that `schema.sql` had all along was missing from the
+live database for a month.
+
+> **Not the production database.** The suites deal real rooms and leave some
+> of them unfinished, and an unfinished room is exactly what the front door
+> refuses to deal past. A test run against production can therefore lock the
+> group out of starting a game for a week. Use a Neon branch, which is free
+> and takes a few seconds, and point `DATABASE_URL` at that.
+>
+> If one ever does get stuck: `node tools/rooms.js` says what is holding the
+> door, and `node tools/rooms.js close ABCD` releases it.
 
 ### Deploying
 
