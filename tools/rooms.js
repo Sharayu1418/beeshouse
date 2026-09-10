@@ -3,6 +3,11 @@
  *
  *   node tools/rooms.js                 list every room that has not finished
  *   node tools/rooms.js close ABCD      mark one finished, releasing the door
+ *   node tools/rooms.js close-all       finish every unfinished room at once
+
+ * close-all is for clearing up after a test run that was pointed at a real
+ * database. It does not ask, and it cannot tell a test room from a game five
+ * people are in the middle of, so read the list first.
  *
  * There is exactly one group, so "a game is running" is a fact about the
  * whole app: while one room is open the front door sends everybody into it
@@ -34,6 +39,18 @@ function ago(ms) {
   const c = new Client({ connectionString: conn,
     ssl: /localhost|127\.0\.0\.1/.test(conn) ? false : { rejectUnauthorized: false } });
   await c.connect();
+
+  if (cmd === 'close-all') {
+    const r = await c.query(
+      `update games set status='done', finished_at=now()
+        where status <> 'done' returning code`);
+    console.log(r.rowCount
+      ? '\nClosed ' + r.rowCount + ': ' + r.rows.map(function (x) { return x.code; }).join(', ') +
+        '\n\nThe door is free. The next Yes deals a fresh room.\n'
+      : '\nNothing was open.\n');
+    await c.end();
+    return;
+  }
 
   if (cmd === 'close') {
     if (!arg) { console.error('\n  node tools/rooms.js close ABCD\n'); process.exit(1); }
