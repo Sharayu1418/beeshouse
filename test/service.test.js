@@ -181,6 +181,82 @@ async function run(db, label){
     ok(nudge.text.includes('/g/' + anyTurnView.code), 'nudge link points at the room');
   }
 
+
+
+  /* ================================================================
+     One group, one game.
+
+     The front door used to deal a fresh room every time it was pressed,
+     which is how five people end up in two rooms and nobody notices for a
+     day. openRoom() is the policy. createRoom() stays the primitive
+     underneath it, because a season's next match is allowed to open a room
+     precisely when the previous one has finished.
+     ================================================================ */
+  const five = [
+    { animal:'bee', name:'Hrutik' }, { animal:'deer', name:'Sharayu' },
+    { animal:'snake', name:'Shivani' }, { animal:'rhino', name:'Sahil' },
+    { animal:'giraffe', name:'Roshan' }
+  ];
+  const shutEverything = async () => {
+    let g; while ((g = await db.findOpenGame()))
+      await db.updateGame(g.id, { status:'done', finished_at:new Date().toISOString() });
+  };
+  await shutEverything();
+
+  const door1 = await S.openRoom({ players: five });
+  ok(door1.existing === false, 'the first press of Yes deals a room');
+
+  const door2 = await S.openRoom({ players: five });
+  ok(door2.existing === true, 'THE POINT: pressing Yes again does not deal a second room');
+  ok(door2.code === door1.code, 'it hands back the room already running');
+  ok(door2.players.length === 5, 'and the seats come back with it, so the picker still works');
+
+  /* Finishing it releases the door. Forcing the status here writes the same
+     state nextRound() writes when a match ends. */
+  const held = await db.getGameByCode(door1.code);
+  await db.updateGame(held.id, { status:'done', finished_at:new Date().toISOString() });
+  const door3 = await S.openRoom({ players: five });
+  ok(door3.existing === false, 'a finished room stops blocking');
+  ok(door3.code !== door1.code, 'and the next press deals a genuinely new one');
+
+  /* An abandoned room must not hold the door shut forever, or a group that
+     starts one and loses interest can never play again. The clock reads the
+     newest move, falling back to when the room was dealt. */
+  ok((await S.liveRoom()) !== null, 'a room dealt just now is alive');
+
+  const ghost = await db.getGameByCode(door3.code);
+  const eightDaysAgo = new Date(Date.now() - 8*24*60*60*1000).toISOString();
+  await db.updateGame(ghost.id, { created_at: eightDaysAgo });
+  await db.appendMoves([{ game_id: ghost.id, round_n: 1, seat: 0, type: 'TAB',
+                          payload: {}, public_text: 'Somebody moved, a long time ago.',
+                          actor_id: null, victim_ids: [], created_at: eightDaysAgo }]);
+  ok((await S.liveRoom()) === null, 'THE POINT: untouched for a week, a room is dead');
+
+  const door4 = await S.openRoom({ players: five });
+  ok(door4.existing === false, 'and the front door deals again');
+  ok((await db.getGameByCode(ghost.code)) !== null, 'the abandoned room is still readable by its code');
+
+  /* One move today brings it back, because somebody is playing it after
+     all. This is the assertion that fails if the clock is read off the
+     wrong column, which is exactly the bug the turn clock already had. */
+  await shutEverything();
+  await db.updateGame(ghost.id, { status:'playing' });
+  await db.appendMoves([{ game_id: ghost.id, round_n: 1, seat: 1, type: 'TAB',
+                          payload: {}, public_text: 'Somebody moved just now.',
+                          actor_id: null, victim_ids: [] }]);
+  const back = await S.liveRoom();
+  ok(back && back.code === ghost.code, 'a move today revives an abandoned room');
+
+  /* A season deals its own rooms, because it reaches createRoom directly
+     and never goes through the door. */
+  await shutEverything();
+  const snx = await S.createSeason({ matchTarget: 3 });
+  const mx1 = await S.createRoom({ players: five, seasonCode: snx.code });
+  ok(mx1.season && mx1.season.matchNo === 1, 'a season still deals its own rooms');
+  const mxOpen = await S.openRoom({ players: five });
+  ok(mxOpen.existing === true && mxOpen.code === mx1.code,
+     'and the front door then points at the season match, not a stray room');
+
   await db.close();
 }
 

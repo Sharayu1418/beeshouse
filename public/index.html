@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=20260906-0612">
+<link rel="stylesheet" href="/style.css?v=20260907-0051">
 </head>
 <body>
 <div id="app"></div>
@@ -16,10 +16,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js?v=20260906-0612"></script>
-<script src="/cards.js?v=20260906-0612"></script>
-<script src="/anim.js?v=20260906-0612"></script>
-<script src="/voices.js?v=20260906-0612"></script>
+<script src="/engine.js?v=20260907-0051"></script>
+<script src="/cards.js?v=20260907-0051"></script>
+<script src="/anim.js?v=20260907-0051"></script>
+<script src="/voices.js?v=20260907-0051"></script>
 <script>
 (function () {
 'use strict';
@@ -35,7 +35,7 @@
 /* Which build you are actually looking at. Shown at the foot of the rule
    book and put on window, because "have I really got the new one" was
    guesswork for an afternoon and it should be a five second answer. */
-var BUILD = '20260906-0612';
+var BUILD = '20260907-0051';
 try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
@@ -203,8 +203,16 @@ function TopBar(props){
   return div({className:'topbar'},
     span({className:'logo'}, '🐝 ', span({className:'long'}, 'THE BEE’S '), 'HOUSE'),
     div({style:{flex:1}}),
+    /* In a season the chip is the way back to the standings. Over five
+       matches and several weeks the /s/ link is long gone from the group
+       chat, and the end of a match is too rare a moment to be the only
+       door to the running total. */
     (props.code || props.round)
-      ? span({className:'chip'},
+      ? h(props.onSeason ? 'button' : 'span',
+          { className:'chip' + (props.onSeason ? ' tappable' : ''),
+            onClick: props.onSeason || undefined,
+            'aria-label': props.onSeason ? 'Season standings' : undefined },
+          props.onSeason ? span({style:{marginRight:'5px'}}, '🏆') : null,
           props.code || '',
           props.code && props.round ? span({style:{opacity:.45}}, ' · ') : null,
           props.round ? ('R'+props.round+'/'+props.rounds) : '')
@@ -289,13 +297,22 @@ function Home(props){
   var s4 = useState(0), refusals=s4[0], setRefusals=s4[1];
   var s5 = useState({x:0,y:0}), off=s5[0], setOff=s5[1];
   var s6 = useState(false), joining=s6[0], setJoining=s6[1];
+  var s7 = useState(false), rejoin=s7[0], setRejoin=s7[1];
 
+  /* One group, one game. If a game is already running the server hands back
+     that room instead of dealing a second one, and saying so out loud beats
+     silently teleporting somebody who just pressed a button marked Yes. */
   async function create(){
     setBusy(true); setErr(null);
     try {
       Audio_.unlock(); Audio_.cabo();
       var r = await API.createRoom(null);
       try { sessionStorage.setItem('beeshouse:refusals', String(refusals)); } catch(e){}
+      if (r.existing) {
+        setRejoin(true);
+        setTimeout(function(){ location.href = '/g/' + r.code; }, 1400);
+        return;
+      }
       location.href = '/g/' + r.code;
     } catch(e){ setErr(e.message); setBusy(false); }
   }
@@ -359,6 +376,9 @@ function Home(props){
           span({}, 'All animals were assigned by Hrutik. No appeals were heard.'))
       : null,
     err ? div({className:'err'}, err) : null,
+    rejoin ? div({className:'smallprint'},
+        span({className:'sp-tag'}, 'Already dealt'),
+        span({}, 'A game is running. Taking you to it.')) : null,
     div({className:'answers'},
       btn({ className:'btn primary yes-btn', disabled:busy, onClick:create },
         busy ? 'Dealing…' : 'Yes'),
@@ -1638,7 +1658,26 @@ function RuleBook(props){
       P({className:'muted', style:{fontSize:'14px', lineHeight:'1.5', marginBottom:'18px'}},
         'Every hostile thing anybody does to anybody is written down, permanently, and you can read it any time. ',
         h('b',null,'What it costs stays hidden until the end of the match'),
-        ', then whoever is winning has a point taken off for every single thing they did to you.'),
+        ', then whoever is winning has a point taken off for every single thing they did to you. ',
+        'In a season it is counted a second time at the very end, over every match at once.'),
+
+      span({className:'eyebrow'}, 'Seasons'),
+      div({className:'rulebox'},
+        Row('s1', 'Starting one', 'Offered when a match finishes, never before, because nobody knows whether they want five matches until they have played one. The match you just finished becomes match one.'),
+        Row('s2', 'What carries', h('span',null,
+          'Scores stop resetting. ', h('b',null,'Nothing else changes'),
+          ': every match still settles its own Tab at the end, exactly as it does on its own.')),
+        Row('s3', 'The next match', 'Dealt from the standings screen. Same five animals, same names, nobody re-enters anything. Everybody can press it; it only ever opens one room.'),
+        Row('s4', 'The standings', h('span',null,
+          'The trophy on the room code, any time. Only finished matches count, so a match still in play never moves the table under you. ',
+          h('b',null,'Lowest total is ahead.'))),
+        Row('s5', 'The end', 'When the last match is played the season settles: whoever is ahead has a point taken off by everybody, for every single thing they did to them, in any match. It can change the winner, which is the point of keeping a tab.')),
+
+      span({className:'eyebrow'}, 'One at a time'),
+      P({className:'muted', style:{fontSize:'14px', lineHeight:'1.5', marginBottom:'18px'}},
+        'There is only ever one game running. Press Yes while one is going and you land in ',
+        h('b',null,'that'), ' game rather than a second one, because five people split across two rooms is not two games, it is nought. ',
+        'A room nobody has opened for a week is treated as abandoned and stops holding the door shut.'),
 
       span({className:'eyebrow'}, 'Remembering'),
       div({className:'rulebox'},
@@ -1998,6 +2037,8 @@ function App(){
        currently looking at, so the chip carries the season instead. */
     h(TopBar,{ code: seasonOpen && view.season ? view.season.code : code,
                round: seasonOpen ? null : view.round, rounds:view.rounds,
+               onSeason: (view.season && !seasonOpen)
+                 ? function(){ Audio_.tap(); setSeasonOpen(true); } : null,
                onTab:function(){ setTab(true); }, onRules:function(){ Audio_.tap(); setRules(true); } }),
     err ? div({className:'err'}, err) : null,
     catchup ? div({className:'catchup'}, 'Showing you what changed while you were gone') : null,

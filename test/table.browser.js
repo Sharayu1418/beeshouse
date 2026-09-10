@@ -13,6 +13,16 @@
 const { chromium } = require('playwright');
 process.env.PORT = process.env.PORT || '3317';
 require('../server.js');
+/* This file needs three separate rooms, and the front door now refuses to
+   deal a second one while a game is running. That refusal is the feature,
+   so rather than working around it the test finishes each room the way a
+   real match finishes, reaching past HTTP through the same door
+   _handler.js already opens for the turn clock. */
+const { db } = require('../api/_handler.js');
+async function finishRoom(code){
+  const g = await db().getGameByCode(code);
+  if (g) await db().updateGame(g.id, { status:'done', finished_at:new Date().toISOString() });
+}
 const base = 'http://localhost:' + process.env.PORT;
 
 const post = async (p, b) => {
@@ -229,7 +239,9 @@ const ROSTER = [
 
   /* --- 5. the lobby is the same table, with the empty seats named.
      A separate room, because this one has everybody in it already. */
+  await finishRoom(code);
   const room2 = await post('/api/room', { players: ROSTER });
+  ok(room2.existing === false, 'a finished room lets the door deal another');
   const t2 = (await post('/api/claim', { code: room2.code, seat: 0 })).token;
   const ctx2 = await b.newContext({ viewport:{width:400,height:880}, deviceScaleFactor:2 });
   await ctx2.route('https://fonts.g**/**', r => r.abort());
@@ -319,6 +331,7 @@ const ROSTER = [
 
   /* --- 6. the peek is at the table too, and the drawn card comes to your
      hand rather than sitting out with the piles. */
+  await finishRoom(room2.code);
   const room3 = await post('/api/room', { players: ROSTER });
   const t3 = [];
   for (let i = 0; i < 5; i++) t3.push((await post('/api/claim', { code: room3.code, seat:i })).token);

@@ -178,11 +178,52 @@ async function toSettlement(p){
   await q.waitForSelector('.err', { timeout:15000 });
   ok(/No season/.test(await q.textContent('.err')), 'an unknown season code says so');
 
-  /* ---- 4. play the season out and settle it on screen ----------------- */
+  /* ---- 4. the standings are reachable while a match is running --------
+     Over five matches and several weeks the /s/ link is gone from the group
+     chat, so the end of a match cannot be the only door to the running
+     total. The room code in the topbar is the other one. */
   const nm2 = await post('/api/next-match', { code:m1.code, token:m1.tok[0] });
-  const t2 = []; for (let i=0;i<5;i++) t2.push((await post('/api/claim',{code:nm2.code, seat:i})).token);
-  await playOut(nm2.code, t2);
-  const nm3 = await post('/api/next-match', { code:nm2.code, token:t2[0] });
+  const tMid = []; for (let i=0;i<5;i++) tMid.push((await post('/api/claim',{code:nm2.code, seat:i})).token);
+  for (let i=0;i<5;i++){ await post('/api/peek',{code:nm2.code, token:tMid[i], indices:[0,1]}).catch(()=>{});
+                         await post('/api/ready',{code:nm2.code, token:tMid[i]}).catch(()=>{}); }
+
+  const ctxMid = await b.newContext({ viewport:{width:400,height:880} });
+  await ctxMid.route('https://fonts.g**/**', r=>r.abort());
+  await ctxMid.route('https://cdnjs.cloudflare.com/**', route => route.fulfill({
+    path: route.request().url().includes('react-dom')
+      ? '/home/claude/node_modules/react-dom/umd/react-dom.production.min.js'
+      : '/home/claude/node_modules/react/umd/react.production.min.js',
+    contentType:'text/javascript' }));
+  await ctxMid.addInitScript(([c,t]) => {
+    localStorage.setItem('beeshouse:'+c, JSON.stringify({ token:t, seat:0 }));
+  }, [nm2.code, tMid[0]]);
+  const mid = await ctxMid.newPage();
+  mid.on('pageerror', e => errs.push('mid: ' + e.message));
+
+  await mid.goto(base + '/g/' + nm2.code);
+  await mid.waitForSelector('.chip.tappable', { timeout:15000 });
+  ok(true, 'mid match, the room code is a way into the season');
+  await mid.click('.chip.tappable');
+  await mid.waitForSelector('.scores', { timeout:15000 });
+  const midBody = await mid.textContent('.shell');
+  ok(/1 of 3 matches played/.test(midBody),
+     'THE POINT: the standings open mid match, counting only what has finished');
+  ok(/still going/.test(midBody), 'and the match being played is listed as unfinished');
+  await mid.screenshot({ path:'/home/claude/s7-midmatch.png', fullPage:true });
+  /* Quoted, and scoped to a button. `text=Back` is a case-insensitive
+     SUBSTRING match, and one of the season lines above ends "nobody ever
+     got them back", so the unquoted version clicked a sentence and the
+     screen never changed. The test then failed on the next line and blamed
+     the Back button, which was innocent. */
+  await mid.click('button >> text="Back"');
+  await mid.waitForSelector('.chip.tappable', { timeout:15000 });
+  ok(true, 'and Back returns to the match without losing the seat');
+  ok(!(await mid.$('.pips')), 'the season screen is actually gone, not just behind something');
+  await ctxMid.close();
+
+  /* ---- 5. play the season out and settle it on screen ----------------- */
+  await playOut(nm2.code, tMid);
+  const nm3 = await post('/api/next-match', { code:nm2.code, token:tMid[0] });
   const t3 = []; for (let i=0;i<5;i++) t3.push((await post('/api/claim',{code:nm3.code, seat:i})).token);
   const last = await playOut(nm3.code, t3);
   ok(last.phase === 'matchEnd', 'the third match finished');

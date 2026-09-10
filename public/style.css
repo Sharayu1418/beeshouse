@@ -624,3 +624,5 @@ p{margin:0}
 }
 .pip.on{background:var(--brass);border-color:var(--brass)}
 .btn.ghost.on{border-color:var(--brass);color:var(--brass);background:rgba(227,167,47,.08)}
+.chip.tappable{border-color:var(--brass);color:var(--brass)}
+.chip.tappable:active{transform:translateY(1px)}

@@ -300,6 +300,10 @@ writes down:
 - A test that passed 3 runs in 4 because it depended on the shuffle. Seeded.
   *A test that passes most of the time is worse than no test: it trains you to
   re-run it.*
+- A Playwright `text=Back` that clicked a *sentence*. It is a case-insensitive
+  substring match, and a season line ends "nobody ever got them back", so the
+  Back button was never pressed, the screen never changed, and the failure
+  pointed at the button rather than the selector
 
 ---
 

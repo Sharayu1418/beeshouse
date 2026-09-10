@@ -100,13 +100,39 @@ const ok = (c, m) => { if (!c) { fails++; console.log('   FAIL:', m); } else con
   ok((await p.$$('.seat')).length > 0, 'and it lands on the seat picker like any other new house');
   await p.screenshot({ path:'/home/claude/h5-dealt.png' });
 
-  // ------------------------------------------------- the original still works
+  // --------------------------------------------------- one group, one game
+  /* The room the turned button just dealt is now running, so the next
+     person through the door must land in THAT room. Five people split
+     across two rooms is not two games, it is nought, and it took a day to
+     notice the first time. */
+  const dealt = url.split('/g/')[1].split(/[/?#]/)[0];
+
   const q = await phone();
   await q.goto(base + '/');
   await q.waitForSelector('.yes-btn', { timeout:15000 });
   await q.click('.yes-btn');
+  await q.waitForSelector('.smallprint >> text=A game is running', { timeout:15000 });
+  ok(true, 'a second phone is told a game is already running rather than silently teleported');
+  await q.screenshot({ path:'/home/claude/h6-already.png' });
+
   await q.waitForURL(/\/g\/[A-Z0-9]+/, { timeout:15000 }).catch(()=>{});
-  ok(/\/g\/[A-Z0-9]{3,}/.test(q.url()), 'and the original Yes still deals, which is the boring half');
+  const landed = q.url().split('/g/')[1].split(/[/?#]/)[0];
+  ok(landed === dealt,
+     'THE POINT: it lands in the running room (' + landed + '), not a second one (' + dealt + ')');
+  await q.waitForSelector('.seat', { timeout:15000 });
+  ok((await q.$$('.seat')).length > 0, 'and it is the seat picker for that room');
+
+  /* The joke must survive the rule: the No button still runs away and still
+     turns into a Yes, it just cannot deal a rival room any more. */
+  const r = await phone();
+  await r.goto(base + '/');
+  await r.waitForSelector('.no-btn', { timeout:15000 });
+  for (let i = 0; i < 4; i++) { await r.click('.no-btn'); await r.waitForTimeout(120); }
+  ok(/Both of them work/.test(await label(r, '.refuse-count')), 'the No button still surrenders');
+  await r.click('.no-btn');
+  await r.waitForURL(/\/g\/[A-Z0-9]+/, { timeout:15000 }).catch(()=>{});
+  ok(r.url().split('/g/')[1].split(/[/?#]/)[0] === dealt,
+     'and the turned button lands in the same running room');
 
   await b.close();
   console.log(fails ? '\n   ' + fails + ' FAILED\n' : '\n   front door ok\n');
