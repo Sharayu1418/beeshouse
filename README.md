@@ -390,6 +390,31 @@ live database for a month.
 > If one ever does get stuck: `node tools/rooms.js` says what is holding the
 > door, and `node tools/rooms.js close ABCD` releases it.
 
+### The one test that runs against what is actually deployed
+
+```bash
+node tools/smoke.js                    # against bee-house.vercel.app
+node tools/smoke.js https://some-preview.vercel.app
+```
+
+Every other suite boots a server it controls. This one plays two complete
+matches and a whole season through the **deployed** functions, over the real
+network, against the real database: the front door, five seats, three rounds,
+the recap, a season, a second match, and the settlement. Twenty one checks,
+about a minute.
+
+It is the only test that can catch something which is wrong *only* in
+production, which is not hypothetical: a column that `schema.sql` had all
+along was missing from the live database for a month, and nothing that ran
+against a local server could have known.
+
+It cleans up after itself. Both matches are played to the end, so they close
+and cannot hold the front door. With `DATABASE_URL` set it also deletes the
+season it made, so the first real season is still Season 1.
+
+It consumes whatever room is currently open, because there is only ever one.
+Run it, then press Yes for a clean room to send to the group.
+
 ### Deploying
 
 ```bash
