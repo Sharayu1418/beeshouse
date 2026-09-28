@@ -119,7 +119,7 @@ async function run(db, label) {
   });
   const bBefore = await hand(b);
   const vv = await S.getState(code, tok[a]);
-  await S.applyMove(code, tok[a], { type:'SLAP_GO', idx:[0], seat: b }, vv.version);
+  await S.applyMove(code, tok[a], { type:'SLAP_GO', idx:[0], by: b, seat: b }, vv.version);
   ok(await hand(b) === bBefore,
      'THE POINT: claiming to be another seat burns nothing of theirs');
   ok(await hand(a) === 2, 'it burned the cards of whoever actually holds the token');
