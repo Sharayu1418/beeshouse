@@ -4,6 +4,7 @@
  *   node tools/rooms.js                 list every room that has not finished
  *   node tools/rooms.js close ABCD      mark one finished, releasing the door
  *   node tools/rooms.js close-all       finish every unfinished room at once
+ *   node tools/rooms.js delete ABCD --yes   erase one room and everything in it
 
  * close-all is for clearing up after a test run that was pointed at a real
  * database. It does not ask, and it cannot tell a test room from a game five
@@ -39,6 +40,53 @@ function ago(ms) {
   const c = new Client({ connectionString: conn,
     ssl: /localhost|127\.0\.0\.1/.test(conn) ? false : { rejectUnauthorized: false } });
   await c.connect();
+
+  /* Erasing a room, which this app otherwise never does.
+   *
+   * `moves` is append only, seat requests keep their denials, and every
+   * round of every match stays in `scores` precisely so nothing can quietly
+   * rewrite what happened. This is the one door out of that, and it exists
+   * because sometimes a room was dealt on a build you have since replaced
+   * and you would rather start clean than explain the difference to four
+   * other people.
+   *
+   * Closing a room with `close` does everything this does except forget:
+   * the door opens, the next Yes deals fresh, and the match stays readable
+   * at its own link forever. Prefer it unless you actually want the history
+   * gone.
+   *
+   * The foreign keys cascade, so the players, rounds, moves and scores go
+   * with it. --yes is required because there is no undo. */
+  if (cmd === 'delete') {
+    if (!arg) { console.error('\n  node tools/rooms.js delete ABCD --yes\n'); process.exit(1); }
+    const g = (await c.query('select id, code, status from games where upper(code)=upper($1)', [arg])).rows[0];
+    if (!g) { console.log('\nNo room with that code.\n'); await c.end(); return; }
+
+    const counts = {};
+    for (const t of ['players', 'rounds', 'moves', 'scores']) {
+      counts[t] = (await c.query('select count(*)::int as n from ' + t + ' where game_id = $1', [g.id])).rows[0].n;
+    }
+    const summary = Object.keys(counts).map(function (k) { return counts[k] + ' ' + k; }).join(', ');
+
+    if (!process.argv.includes('--yes')) {
+      console.log('\n  ' + g.code + ' (' + g.status + ') holds ' + summary + '.');
+      console.log('  Deleting it erases all of that. There is no undo.');
+      console.log('\n  If you only want the front door free, this is gentler:');
+      console.log('      node tools/rooms.js close ' + g.code);
+      console.log('\n  To go ahead:');
+      console.log('      node tools/rooms.js delete ' + g.code + ' --yes\n');
+      await c.end();
+      return;
+    }
+
+    await c.query('delete from games where id = $1', [g.id]);
+    console.log('\n  ' + g.code + ' is gone, along with ' + summary + '.');
+    const open = (await c.query("select count(*)::int as n from games where status <> 'done'")).rows[0].n;
+    console.log('  ' + (open === 0 ? 'Nothing is open. The next Yes deals a fresh room.'
+                                   : open + ' room(s) still open, run tools/rooms.js') + '\n');
+    await c.end();
+    return;
+  }
 
   if (cmd === 'close-all') {
     const r = await c.query(

@@ -389,6 +389,10 @@ live database for a month.
 >
 > If one ever does get stuck: `node tools/rooms.js` says what is holding the
 > door, and `node tools/rooms.js close ABCD` releases it.
+>
+> `node tools/rooms.js delete ABCD --yes` erases one instead, which is the
+> only thing in this repo that forgets anything. Closing does the same job
+> without the forgetting, so prefer it unless the history is the problem.
 
 ### Playing it without four other people
 
