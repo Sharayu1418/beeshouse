@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=20260928-0010">
+<link rel="stylesheet" href="/style.css?v=20260928-0026">
 </head>
 <body>
 <div id="app"></div>
@@ -16,10 +16,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js?v=20260928-0010"></script>
-<script src="/cards.js?v=20260928-0010"></script>
-<script src="/anim.js?v=20260928-0010"></script>
-<script src="/voices.js?v=20260928-0010"></script>
+<script src="/engine.js?v=20260928-0026"></script>
+<script src="/cards.js?v=20260928-0026"></script>
+<script src="/anim.js?v=20260928-0026"></script>
+<script src="/voices.js?v=20260928-0026"></script>
 <script>
 (function () {
 'use strict';
@@ -35,7 +35,7 @@
 /* Which build you are actually looking at. Shown at the foot of the rule
    book and put on window, because "have I really got the new one" was
    guesswork for an afternoon and it should be a five second answer. */
-var BUILD = '20260928-0010';
+var BUILD = '20260928-0026';
 try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
@@ -714,6 +714,31 @@ function WaitScreen(props){
   var a0 = useState(false), armed = a0[0], setArmed = a0[1];
   var held = clock ? heldFor(clock.hours) : null;
 
+  /* Burning a card that matches the pile is the one thing you may do while
+     it is not your turn, which is the rule at a real table. The selection
+     lives here rather than on the server, because the server's `sel`
+     belongs to whoever is actually playing.
+
+     A burned card lands face up, so the rank on top does not change and
+     everybody holding one can dump theirs. There is nothing to be quickest
+     at. What you cannot do is burn your last card, because emptying your
+     hand ends the round and a round must not end in the middle of somebody
+     else's move. */
+  var b0 = useState([]), burnSel = b0[0], setBurnSel = b0[1];
+  var top = view.discardTop;
+  var mine = (view.you && view.you.hand) || [];
+  var canBurn = !!top && !!props.burn && mine.length > 1;
+  useEffect(function(){ setBurnSel([]); }, [top && top.id, view.turn, view.round]);
+
+  function toggleBurn(i){
+    Audio_.tap();
+    var n = burnSel.slice(), k = n.indexOf(i);
+    if (k >= 0) n.splice(k, 1);
+    else if (n.length >= mine.length - 1) return;   // one must stay
+    else n.push(i);
+    setBurnSel(n);
+  }
+
   /* The table stays on screen when it is not your turn.
    *
      It used to be a line of text and a briefing, which meant the one time
@@ -737,9 +762,23 @@ function WaitScreen(props){
 
     h(TableView,{ view:view, send:function(){}, aim:null, frozen:true,
                   onPickCard:function(){}, onPickPlayer:function(){} }),
-    h(MyHand,{ view:view, tag:'your four',
+    h(MyHand,{ view:view, tag: canBurn ? 'burn a match' : 'your four',
+      selected: function(i){ return burnSel.indexOf(i) >= 0; },
+      targetable: function(){ return canBurn; },
+      onCard: canBurn ? toggleBurn : null,
       note:function(i){ return props.notes ? (props.notes[i] || '') : ''; },
       onNote:props.onNote }),
+
+    canBurn
+      ? (burnSel.length
+          ? btn({className:'btn primary', disabled:props.busy,
+                 onClick:function(){ Audio_.deal(); props.burn(burnSel.slice()); setBurnSel([]); }},
+              'Burn ' + burnSel.length + (burnSel.length === 1 ? ' card' : ' cards')
+                + ' onto the ' + top.r)
+          : P({className:'hint', style:{marginTop:'2px'}},
+              'The pile shows a ' + top.r + '. Tap any of yours you think match and burn them, '
+              + 'without waiting for your turn. Wrong and you take a penalty card.'))
+      : null,
 
     h(Briefing, { b: view.briefing }),
     div({style:{flex:1, minHeight:'6px'}}),
@@ -1625,6 +1664,11 @@ function RuleBook(props){
         Row('t2', '👏 Slap', h('span',null,
           'Tap your own face-down cards you believe match the rank on the discard, then slap. Right and they are gone. ',
           h('b',null,'Wrong and you take a penalty card.'), ' Two at once is a Vada Pav, three a Misal, all four a Thali.')),
+        Row('t2b', 'Burning early', h('span',null,
+          h('b',null,'You do not have to wait for your turn to do it.'),
+          ' If the pile shows a rank you are holding, burn it whenever you notice. A burned card lands face up, so the rank on top does not change and everybody holding one can dump theirs. ',
+          h('b',null,'Nobody has to be quickest.'),
+          ' Out of turn you must keep one card, because emptying your hand ends the round and that is yours to do on your own turn. No dishes either: the Feast is a turn play.')),
         Row('t3', '📣 Cabo', h('span',null,
           '“I am lowest, end the round.” Everyone else gets one last turn, then all hands flip. Right, you score ',
           h('b',null,'zero'), '. Wrong, you score your hand ', h('b',null,'plus ten'), '.'))),
@@ -2078,6 +2122,7 @@ function App(){
   else if (view.phase === 'turn')
     body = view.yourTurn ? h(Board,{ view:view, send:send, code:code, pick:pick, setPick:setPick })
                          : h(WaitScreen,{ view:view, refresh:refresh, skip:skip, busy:busy,
+                             burn: function(idx){ send({ type:'SLAP_GO', idx:idx }); },
                              notes: Notes.all(code, view.round),
                              onNote: function(i, t){ Notes.set(code, view.round, i, t); },
                              nudge: (function(){

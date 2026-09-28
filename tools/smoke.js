@@ -114,6 +114,26 @@ async function playMatch(code, tok) {
   const room = await post('/api/room', { players: ROSTER });
   ok(/^[A-Z0-9]{4}$/.test(room.code), 'a room to play in: ' + room.code +
      (room.existing ? ' (the one that was already open)' : ' (freshly dealt)'));
+
+  /* There is only ever one room, so this lands in whatever is open. If that
+     room has people sitting in it, it is a REAL GAME and this test would be
+     trying to take their seats. Stop, loudly, and say what to do.
+
+     It cannot actually damage anything: claiming a seat somebody holds is
+     refused by the seat check. But it fails several steps later with an
+     error about devices, which reads like a bug in the app rather than a
+     test pointed at the wrong room. */
+  const occupied = await get('/api/room?code=' + room.code);
+  const sitting = occupied.seats.filter(s => s.claimed);
+  if (room.existing && sitting.length) {
+    console.log('\n  STOP. ' + room.code + ' is a real game, not an empty room.');
+    console.log('  ' + sitting.length + ' of ' + occupied.seats.length + ' seats are taken: ' +
+                sitting.map(s => s.name).join(', '));
+    console.log('\n  This test plays two whole matches, so it needs a room of its own.');
+    console.log('  Finish that game, or close it with:  node tools/rooms.js close ' + room.code);
+    console.log('  Then run this again and the front door will deal a fresh one.\n');
+    process.exit(2);
+  }
   const again = await post('/api/room', { players: ROSTER });
   ok(again.code === room.code && again.existing === true,
      'pressing Yes again lands in the same room, not a second one');
