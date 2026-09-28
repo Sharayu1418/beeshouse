@@ -102,6 +102,43 @@ const URL = 'https://bee-house.vercel.app/g/AB12';
   ok(decodeURIComponent(wa.split('text=')[1]).indexOf('Hrutik') >= 0,
      'and decodes back to the message');
 
+  /* --- the pile, said out loud --------------------------------------
+     Burning a match does not wait for your turn, but you can only do it if
+     you know the pile is showing a rank you hold, and nobody opens a two
+     day game on the off chance. This message is the one thing that reaches
+     all five phones, so it has to carry the top card. */
+  const FIVE = ['bee','deer','snake','rhino','giraffe'];
+  FIVE.forEach(function (an) {
+    ['handoff','nudge','nudgeLate'].forEach(function (kind) {
+      const said = V.message(kind, an, { next:'Roshan', url:URL, pile:{ r:'7', s:'S' }, salt:'p' });
+      ok(/There is a 7 on the pile\./.test(said),
+         an + "'s " + kind + ' names the top card');
+      ok(said.indexOf(URL) > said.indexOf('on the pile'),
+         'and says it before the link, where somebody will read it (' + kind + ')');
+    });
+  });
+
+  /* A swept pile has no top card, and a message must not invent one. */
+  const empty = V.message('handoff', 'bee', { next:'Roshan', url:URL, salt:'p' });
+  ok(!/on the pile/.test(empty), 'with nothing face up it says nothing about the pile');
+  const nulled = V.message('handoff', 'bee', { next:'Roshan', url:URL, pile:null, salt:'p' });
+  ok(!/on the pile/.test(nulled), 'and a null pile is the same as none');
+  ok(!/undefined|\{|\}/.test(nulled), 'with no placeholder left behind');
+
+  /* It may name the RANK and nothing else. The top of the discard is face
+     up in every view, so the rank is already public; the suit is not the
+     point and a value would be a different thing entirely. */
+  FIVE.forEach(function (an) {
+    const said = V.message('handoff', an, { next:'Roshan', url:URL,
+                                            pile:{ r:'K', s:'H', v:-1 }, salt:'p' });
+    ok(!/[\u2660\u2665\u2666\u2663]/.test(said), an + ' does not leak the suit');
+    ok(!/hearts|spades|diamonds|clubs/i.test(said), an + ' does not name it in prose either');
+    ok(!/-1|minus one/i.test(said), an + ' does not leak what it is worth');
+    ok(/There is a K on the pile\./.test(said), 'just the rank: ' + an);
+  });
+  console.log('   pile line: ' +
+    JSON.stringify(V.message('handoff','bee',{next:'Roshan',url:'LINK',pile:{r:'7'},salt:'p'})));
+
   console.log(fails ? '\n   ' + fails + ' FAILED\n' : '\n   voices ok\n');
   process.exit(fails ? 1 : 0);
 })();

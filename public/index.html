@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=20260928-2320">
+<link rel="stylesheet" href="/style.css?v=20260928-2338">
 </head>
 <body>
 <div id="app"></div>
@@ -16,10 +16,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js?v=20260928-2320"></script>
-<script src="/cards.js?v=20260928-2320"></script>
-<script src="/anim.js?v=20260928-2320"></script>
-<script src="/voices.js?v=20260928-2320"></script>
+<script src="/engine.js?v=20260928-2338"></script>
+<script src="/cards.js?v=20260928-2338"></script>
+<script src="/anim.js?v=20260928-2338"></script>
+<script src="/voices.js?v=20260928-2338"></script>
 <script>
 (function () {
 'use strict';
@@ -35,7 +35,7 @@
 /* Which build you are actually looking at. Shown at the foot of the rule
    book and put on window, because "have I really got the new one" was
    guesswork for an afternoon and it should be a five second answer. */
-var BUILD = '20260928-2320';
+var BUILD = '20260928-2338';
 try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
@@ -1679,7 +1679,7 @@ function RuleBook(props){
           h('b',null,'You do not have to wait for your turn to do it.'),
           ' If the pile shows a rank you are holding, burn it the moment you notice. ',
           h('b',null,'One go between turns, and the first person to call it takes it'),
-          ', so it is worth having your phone open. Wrong and you keep the card, take a penalty on top, and that was the go: nobody else gets one until somebody plays. Out of turn you must also keep at least one card, because emptying your hand ends the round and that is yours to do on your own turn. No dishes either: the Feast is a turn play.')),
+          ', so it is worth having your phone open. The message that lands in the group when somebody finishes a turn tells you what is on the pile, which is how you know to look. Wrong and you keep the card, take a penalty on top, and that was the go: nobody else gets one until somebody plays. Out of turn you must also keep at least one card, because emptying your hand ends the round and that is yours to do on your own turn. No dishes either: the Feast is a turn play.')),
         Row('t3', '📣 Cabo', h('span',null,
           '“I am lowest, end the round.” Everyone else gets one last turn, then all hands flip. Right, you score ',
           h('b',null,'zero'), '. Wrong, you score your hand ', h('b',null,'plus ten'), '.'))),
@@ -2064,7 +2064,8 @@ function App(){
         /* Written as you, not as the app. The app cannot send it anyway, so
            the least it can do is sound like the person pressing send. */
         var text = Voices.message('handoff', r.view.you.id,
-          { next: nx.name, url: url, salt: code + r.view.round + r.view.version });
+          { next: nx.name, url: url, pile: r.view.discardTop,
+            salt: code + r.view.round + r.view.version });
         setHandoff({ name: nx.name, emo: nx.emo,
                      whatsapp: 'https://wa.me/?text=' + encodeURIComponent(text), text: text });
       }
@@ -2144,7 +2145,7 @@ function App(){
                                   nudge at hour thirty are different messages */
                                var late = view.clock && view.clock.overdue;
                                var text = Voices.message(late ? 'nudgeLate' : 'nudge', view.you.id,
-                                 { next: nx.name, url: url,
+                                 { next: nx.name, url: url, pile: view.discardTop,
                                    salt: code + view.round + (view.clock ? Math.floor(view.clock.hours) : 0) });
                                return { forName: nx.name, text: text,
                                         whatsapp:'https://wa.me/?text=' + encodeURIComponent(text) };
