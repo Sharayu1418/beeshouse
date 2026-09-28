@@ -20,7 +20,7 @@
  * it is in there.
  */
 const { makeDb }      = require('../lib/db.js');
-const { makeService } = require('../lib/service.js');
+const { makeService, LISTEN_QUESTIONS } = require('../lib/service.js');
 const Engine          = require('../lib/engine.js');
 
 let fails = 0;
@@ -114,8 +114,57 @@ async function run(db, label) {
   await db.close();
 }
 
+/* Listen promises one TRUE thing about a card. You pay a seven or an eight
+ * to ask, so a false answer does not make the game harder, it makes the card
+ * you spent worthless.
+ *
+ * Checked against the whole deck rather than a sample, because the case that
+ * was wrong was two cards out of fifty two: "Is it under 5?" also demanded
+ * the value be above zero, so a red king, worth minus one, was told no. The
+ * best card on the table read as an expensive one. */
+function listenTellsTheTruth() {
+  console.log('\n== listen, against all 52 cards ==');
+  const wrong = [];
+  Engine.SUITS.forEach(function (s) {
+    Engine.RANKS.forEach(function (r) {
+      const card = { id:'x', r:r, s:s }, v = Engine.valueOf(card);
+      LISTEN_QUESTIONS.forEach(function (q) {
+        /* The truth worked out here, independently, rather than by calling
+           the same function the answer comes from. */
+        let truth;
+        if (q.q === 'Is it red?')          truth = (s === 'H' || s === 'D');
+        else if (q.q === 'Is it under 5?') truth = v < 5;
+        else if (q.q === 'Is it a face card?')  truth = (r === 'J' || r === 'Q' || r === 'K');
+        else if (q.q === 'Is it a power card?') truth = ['7','8','9','10','J','Q'].indexOf(r) >= 0;
+        else { fails++; console.log('   FAIL: a question nothing checks: ' + q.q); return; }
+
+        if (q.f(card) !== truth) {
+          wrong.push(r + s + ' (worth ' + v + ') "' + q.q + '" says ' +
+                     (q.f(card) ? 'Yes' : 'No') + ', truth is ' + (truth ? 'Yes' : 'No'));
+        }
+      });
+    });
+  });
+  ok(wrong.length === 0,
+     'THE POINT: every question answers truthfully for every card\n     ' + wrong.join('\n     '));
+
+  /* The one that was wrong, named, so a rewrite cannot quietly undo it. */
+  const under5 = LISTEN_QUESTIONS.filter(function (q) { return q.q === 'Is it under 5?'; })[0];
+  ok(!!under5, 'the under five question still exists');
+  if (under5) {
+    ok(under5.f({ r:'K', s:'H' }) === true, 'a red king IS under five, and says so');
+    ok(under5.f({ r:'K', s:'D' }) === true, 'both of them');
+    ok(under5.f({ r:'K', s:'S' }) === false, 'a black king is thirteen and is not');
+    ok(under5.f({ r:'A', s:'C' }) === true, 'an ace is one and is');
+    ok(under5.f({ r:'5', s:'C' }) === false, 'a five is not under five');
+  }
+  console.log('   52 cards, ' + LISTEN_QUESTIONS.length + ' questions, ' +
+              (52 * LISTEN_QUESTIONS.length) + ' answers, all true');
+}
+
 (async () => {
   await run(makeDb({ kind:'memory' }), 'the kings, on memory');
+  listenTellsTheTruth();
   if (process.env.DATABASE_URL)
     await run(makeDb({ kind:'pg', connectionString: process.env.DATABASE_URL }), 'the kings, on postgres');
   console.log('\n' + (fails ? fails + ' FAILURES' : 'ALL PASS'));
