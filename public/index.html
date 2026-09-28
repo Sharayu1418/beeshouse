@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=20260907-0051">
+<link rel="stylesheet" href="/style.css?v=20260928-0010">
 </head>
 <body>
 <div id="app"></div>
@@ -16,10 +16,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js?v=20260907-0051"></script>
-<script src="/cards.js?v=20260907-0051"></script>
-<script src="/anim.js?v=20260907-0051"></script>
-<script src="/voices.js?v=20260907-0051"></script>
+<script src="/engine.js?v=20260928-0010"></script>
+<script src="/cards.js?v=20260928-0010"></script>
+<script src="/anim.js?v=20260928-0010"></script>
+<script src="/voices.js?v=20260928-0010"></script>
 <script>
 (function () {
 'use strict';
@@ -35,7 +35,7 @@
 /* Which build you are actually looking at. Shown at the foot of the rule
    book and put on window, because "have I really got the new one" was
    guesswork for an afternoon and it should be a five second answer. */
-var BUILD = '20260907-0051';
+var BUILD = '20260928-0010';
 try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
@@ -1760,6 +1760,10 @@ function App(){
      Refs hold the first two; useEffect is the third. */
   var prevView = useRef(null);
   var beforeBoxes = useRef({});
+  /* The newest gesture already played, and which opening looks have been
+     watched. Refs rather than state: neither should ever cause a repaint. */
+  var lastFx = useRef(0);
+  var seenLooks = useRef({});
   var shellRef = useRef(null);
   var pendingFx = useRef(null);
 
@@ -1827,6 +1831,61 @@ function App(){
       if (node && node.closest('.hand')) Anim.settle(node);
     });
 
+    /* ---- gestures -------------------------------------------------
+       The diff finds cards that moved. It cannot find the things that move
+       nothing, and those are the ones you actually watch at a table:
+       somebody picking up one of their own cards and squinting at it. The
+       server names what happened in `fx`, in seats and slots, and there is
+       nowhere in that shape to put a face.
+
+       fx.n only ever counts up, so a phone that missed three polls plays
+       the newest gesture and not the three it slept through, and a phone
+       that polls the same state twice plays nothing. */
+    function cardAt(seat, slot){
+      if (!el || !view) return null;
+      var id = null;
+      if (view.you && view.you.seat === seat) {
+        var mine = view.you.hand[slot]; id = mine && mine.id;
+      } else {
+        var p = (view.players || []).filter(function(x){ return x.seat === seat; })[0];
+        var sl = p && p.slots && p.slots[slot]; id = sl && sl.id;
+      }
+      return id ? el.querySelector('[data-card="' + id + '"]') : null;
+    }
+    function cardsOf(seat){
+      if (!el || !view) return [];
+      var p = (view.players || []).filter(function(x){ return x.seat === seat; })[0];
+      var ids = (view.you && view.you.seat === seat)
+        ? view.you.hand.map(function(c){ return c.id; })
+        : ((p && p.slots) || []).map(function(c){ return c.id; });
+      return ids.map(function(id){ return el.querySelector('[data-card="' + id + '"]'); });
+    }
+
+    var fx = view.fx;
+    if (fx && fx.n && fx.n !== lastFx.current) {
+      lastFx.current = fx.n;
+      if (fx.kind === 'look') {
+        (fx.slots || []).forEach(function(i, k){ Anim.lookAt(cardAt(fx.seat, i), k * 220); });
+      } else if (fx.kind === 'swap') {
+        Anim.exchange([cardAt(fx.a.seat, fx.a.slot), cardAt(fx.b.seat, fx.b.slot)]);
+      } else if (fx.kind === 'shed') {
+        Anim.shedHand(cardsOf(fx.seat));
+      } else if (fx.kind === 'draw') {
+        var piles = el && el.querySelectorAll('.pile');
+        Anim.pickUp(piles && piles[fx.from === 'discard' ? 1 : 0]);
+      }
+    }
+
+    /* The opening look is not a move, so it carries no fx. It is a list
+       that grows as people take their turn at it, and a seat is animated
+       the first time it shows up. */
+    (view.looks || []).forEach(function(l){
+      var key = view.round + ':' + l.seat;
+      if (seenLooks.current[key]) return;
+      seenLooks.current[key] = true;
+      (l.slots || []).forEach(function(i, k){ Anim.lookAt(cardAt(l.seat, i), k * 220); });
+    });
+
     prevView.current = view;
     beforeBoxes.current = Anim.measure(el);
     if (!catchup) saveTable(view);
@@ -1839,6 +1898,10 @@ function App(){
   function signature(v){
     if (!v) return '';
     return [v.version, v.phase, v.turn, v.round, v.allClaimed,
+            /* a gesture is a reason to repaint: the opening look changes no
+               version and no turn, and without this nobody ever sees it */
+            v.fx ? v.fx.n : 0,
+            (v.looks || []).map(function(l){ return l.seat; }).join(','),
             (v.seatRequests || []).length,
             /* who has taken a seat: in the lobby this is the only thing that
                changes as people arrive, and leaving it out meant the room

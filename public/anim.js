@@ -169,6 +169,68 @@ function caboPulse(shellEl) {
   setTimeout(function () { shellEl.classList.remove('cabo'); }, 1100);
 }
 
+/* ---------------------------------------------------------- gestures
+ *
+ * Motion the diff cannot find, because nothing moved.
+ *
+ * Somebody looking at one of their own cards changes no position, so FLIP
+ * has nothing to glide. But at a real table it is the most visible thing
+ * anybody does: they pick a card up, tilt it toward their face, and put it
+ * back, and four other people watch them do it. That is what these are.
+ *
+ * None of them can show a face. They act on the element that renders a
+ * card BACK, and the back has no value in it to reveal.
+ */
+
+/* Picked up, tilted away from the table, set down again. */
+function lookAt(el, delay) {
+  if (reduced || !el) return;
+  el.style.setProperty('--lookdelay', (delay || 0) + 'ms');
+  el.classList.remove('looking');
+  void el.offsetWidth;
+  el.classList.add('looking');
+  setTimeout(function () { el.classList.remove('looking'); }, 1100 + (delay || 0));
+}
+
+/* Two cards that just traded places. FLIP already carries them across; this
+   says the movement was deliberate rather than a layout drift. */
+function exchange(els) {
+  if (reduced) return;
+  (els || []).forEach(function (el) {
+    if (!el) return;
+    el.classList.remove('trading');
+    void el.offsetWidth;
+    el.classList.add('trading');
+    setTimeout(function () { el.classList.remove('trading'); }, 760);
+  });
+}
+
+/* A hand shuffled into itself. Deliberately unreadable: every card lifts at
+   once, they all turn together, and they come down. There is no path to
+   follow, because after a shed there is genuinely nothing to follow. */
+function shedHand(els) {
+  if (reduced) return;
+  (els || []).forEach(function (el, i) {
+    if (!el) return;
+    el.style.setProperty('--shx', (((i % 2) ? 1 : -1) * (9 + Math.random() * 8)).toFixed(0) + 'px');
+    el.style.setProperty('--shr', (((Math.random() * 36) - 18)).toFixed(0) + 'deg');
+    el.classList.remove('shedding');
+    void el.offsetWidth;
+    el.classList.add('shedding');
+    setTimeout(function () { el.classList.remove('shedding'); }, 820);
+  });
+}
+
+/* Somebody took a card. No id, because a watcher is not entitled to one:
+   just a back rising off the pile. */
+function pickUp(pileEl) {
+  if (reduced || !pileEl) return;
+  pileEl.classList.remove('picking');
+  void pileEl.offsetWidth;
+  pileEl.classList.add('picking');
+  setTimeout(function () { pileEl.classList.remove('picking'); }, 520);
+}
+
 function settle(el) {
   if (reduced || !el) return;
   el.classList.add('settling');
@@ -177,5 +239,6 @@ function settle(el) {
 
 return { diff: diff, placesIn: placesIn, measure: measure, flip: flip,
          flipCard: flipCard, dealIn: dealIn, sweepAway: sweepAway,
-         caboPulse: caboPulse, settle: settle, reduced: reduced };
+         caboPulse: caboPulse, settle: settle, reduced: reduced,
+         lookAt: lookAt, exchange: exchange, shedHand: shedHand, pickUp: pickUp };
 }));

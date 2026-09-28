@@ -565,7 +565,7 @@ p{margin:0}
 .card{ transform-style: preserve-3d; will-change: transform; }
 
 /* FLIP moves: the element is transformed to where it used to be, then
-   released. Everything is cosmetic — the server already decided. */
+   released. Everything is cosmetic; the server already decided. */
 .card.moving{ transition: transform .42s cubic-bezier(.22,.68,.3,1); z-index:20; }
 
 @keyframes dealin{
@@ -579,7 +579,7 @@ p{margin:0}
 .card.settling{ animation: settle .28s ease-out; }
 
 /* Sweep: the pile scatters off the table. The biggest animation in the
-   game, for the move that gains you the least — which is the joke. */
+   game, for the move that gains you the least, which is the joke. */
 @keyframes scatter{
   to{ transform: translate(var(--sx), var(--sy)) rotate(var(--sr)) scale(.7); opacity:0 }
 }
@@ -612,7 +612,7 @@ p{margin:0}
 /* ---------- seasons ----------
    A season needs almost no chrome of its own: the standings are the score
    table the round already uses, and the lines under them are Tab entries.
-   Only two things are actually new — a row of pips for how far through the
+   Only two things are actually new: a row of pips for how far through the
    season the table is, and a selected state on the ghost buttons that pick
    its length. */
 .scores th.n{text-align:right}
@@ -626,3 +626,55 @@ p{margin:0}
 .btn.ghost.on{border-color:var(--brass);color:var(--brass);background:rgba(227,167,47,.08)}
 .chip.tappable{border-color:var(--brass);color:var(--brass)}
 .chip.tappable:active{transform:translateY(1px)}
+
+/* ---------- gestures ----------
+   Motion for things that did not move. A look changes no position, so FLIP
+   has nothing to glide, but it is the most visible thing anybody does at a
+   real table. Every one of these acts on a card BACK, which has no face in
+   it to give away. */
+
+/* picked up, tilted away from the table, set back down */
+.card.looking{
+  animation: look 1s cubic-bezier(.3,.7,.3,1) var(--lookdelay,0ms) both;
+  z-index:6;
+}
+@keyframes look{
+  0%   { transform:translateY(0) rotate(0) scale(1) }
+  22%  { transform:translateY(calc(var(--lift, 26px) * -1)) rotate(-7deg) scale(1.1) }
+  62%  { transform:translateY(calc(var(--lift, 26px) * -1)) rotate(-7deg) scale(1.1) }
+  100% { transform:translateY(0) rotate(0) scale(1) }
+}
+/* Round the table the cards are tiny and the name sits directly above them,
+   so a full lift climbs over somebody's face. Half of one still reads as
+   picked up. */
+.card.xs.looking{ --lift:11px }
+.card.xs.shedding{ --shy:-11px }
+
+/* two cards that just traded, so the glide reads as an exchange */
+.card.trading{ animation: trade .72s ease both; z-index:5 }
+@keyframes trade{
+  0%   { box-shadow:0 0 0 0 rgba(227,167,47,0) }
+  35%  { box-shadow:0 0 0 3px rgba(227,167,47,.85), 0 8px 20px rgba(0,0,0,.45) }
+  100% { box-shadow:0 0 0 0 rgba(227,167,47,0) }
+}
+
+/* a hand shuffled into itself, with no path to follow, because there is none */
+.card.shedding{ animation: shed .8s cubic-bezier(.4,.1,.3,1) both; z-index:6 }
+@keyframes shed{
+  0%   { transform:translate(0,0) rotate(0) }
+  30%  { transform:translate(var(--shx,10px),var(--shy,-20px)) rotate(var(--shr,10deg)) }
+  55%  { transform:translate(calc(var(--shx,10px) * -0.7),calc(var(--shy,-20px) * 1.2)) rotate(calc(var(--shr,10deg) * -1)) }
+  100% { transform:translate(0,0) rotate(0) }
+}
+
+/* somebody took a card off a pile */
+.pile.picking .card:last-child{ animation: pick .5s ease both }
+@keyframes pick{
+  0%   { transform:translateY(0) }
+  45%  { transform:translateY(-14px) scale(1.04) }
+  100% { transform:translateY(0) }
+}
+
+@media (prefers-reduced-motion: reduce){
+  .card.looking, .card.trading, .card.shedding, .pile.picking .card:last-child{ animation:none }
+}
