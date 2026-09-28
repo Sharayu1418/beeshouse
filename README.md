@@ -390,6 +390,32 @@ live database for a month.
 > If one ever does get stuck: `node tools/rooms.js` says what is holding the
 > door, and `node tools/rooms.js close ABCD` releases it.
 
+### Playing it without four other people
+
+```bash
+npm run dev                  # one terminal
+node tools/play.js           # another
+```
+
+It leaves one seat for you, sits in the other four and plays them: they take
+their opening looks, use their animals, swap, sting, shed, call Cabo, and
+occasionally burn a match onto the pile while you are still deciding. Open
+the link it prints, take your seat, and the table moves around you.
+
+This is the only way to see any of the motion. Every gesture in the app is
+somebody ELSE doing something while you watch, so a single browser tab shows
+you none of it.
+
+```
+node tools/play.js --seat 0     leave Hrutik for you instead
+node tools/play.js --fast       no pause between moves
+node tools/play.js --quiet      one line per turn
+```
+
+It waits when the turn is yours. Restart the dev server for a clean table,
+since in-memory storage is wiped on boot. It refuses to run against the live
+site, because there is only ever one room and it would take the group's game.
+
 ### The one test that runs against what is actually deployed
 
 ```bash
