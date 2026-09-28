@@ -1,10 +1,15 @@
 /* Burning a card onto a matching discard, without waiting for your turn.
  *
- * This is the one move anybody may make at any time, which is the rule in
- * the physical game. It works in an asynchronous one for a reason that is
- * not obvious: a burned card lands FACE UP, so the rank on top does not
- * change, and three people holding a seven can each dump theirs. There is
- * no race, so nobody loses for having been asleep.
+ * This is the one move anybody may make while it is not their turn, which
+ * is the rule in the physical game. ONE person gets it, and the first press
+ * takes it: see the pile, call it, and somebody was quicker or they were
+ * not. The go comes back when the game moves on.
+ *
+ * That cap is not decoration. Without it, somebody who never takes a turn
+ * at all can burn wrong cards forever. Their hand is theirs to ruin, but
+ * the DECK IS SHARED, and four hundred attempts leaves a hand holding 404
+ * cards and the deck at zero. That is a measured number, and it is asserted
+ * below.
  *
  * Four things are load bearing and each is proved able to fail at the
  * bottom of this file:
@@ -81,13 +86,43 @@ async function run(db, label) {
   const mid = await S.getState(code, tok[b]);
   ok(mid.discardTop.r === topRank,
      'the burned card lands face up, so the rank on top is unchanged');
-  await burn(b, [1]);
-  ok(await hand(b) === 3,
-     'THE POINT: so the next person holding one can burn theirs too, having been slower');
+  ok(mid.burnedBy === a, 'and the table can see who took the go');
+  await throws(() => burn(b, [1]), 409,
+     'THE POINT: somebody else holding one is too late, the first press took it');
+  ok(await hand(b) === 4, 'being second costs them nothing, it just does not happen');
 
-  // --- and being wrong still costs ------------------------------------
+  // --- but only ONE person gets a go, and the first one took it --------
+  await throws(() => burn(c, [2]), 409, 'the third person is told somebody called it first');
+  ok(await hand(c) === 4, 'and their hand is untouched, no penalty for being slow');
+
+  /* THE ONE THAT MATTERS.
+     Four hundred wrong burns, taking no turn at all, used to leave a hand
+     holding 404 cards and the DECK AT ZERO. The hand is theirs to ruin; the
+     deck is everybody's. That is the whole reason this is capped. */
+  await rig(db, code, function (s) { s.burnedBy = null; });
+  const deckBefore = (await S.getState(code, tok[a])).deckCount;
+  let got = 0;
+  for (let i = 0; i < 400; i++) {
+    try { await burn(a, [0]); got++; } catch (e) { break; }
+  }
+  const after = await S.getState(code, tok[a]);
+  ok(got === 1, 'THE POINT: four hundred attempts get through exactly once (' + got + ')');
+  ok(after.deckCount >= deckBefore - 1,
+     'so the shared deck cannot be drained by somebody who never takes a turn (' +
+     deckBefore + ' -> ' + after.deckCount + ')');
+  ok(after.players[a].handCount <= 5, 'and no hand ends up holding hundreds of cards');
+
+  // --- and being wrong still costs, and still spends it ----------------
+  await rig(db, code, function (s) {
+    const t = s.discard[s.discard.length-1].r;
+    s.burnedBy = null;
+    s.players[c].hand[2] = { id:'cW', r: t === 'K' ? '2' : 'K', s:'C' };
+  });
+  const cBefore = await hand(c);
   await burn(c, [2]);
-  ok(await hand(c) === 5, 'a wrong burn takes a penalty card rather than doing nothing');
+  ok(await hand(c) === cBefore + 1, 'a wrong burn takes a penalty card rather than doing nothing');
+  ok((await S.getState(code, tok[c])).burnedBy === c, 'and being wrong still spends the go');
+  await throws(() => burn(b, [1]), 409, 'so nobody else can try after a miss either');
 
   // --- the turn is untouched ------------------------------------------
   const v = await S.getState(code, tok[turn]);
@@ -96,8 +131,27 @@ async function run(db, label) {
   await S.applyMove(code, tok[turn], { type:'DRAW' }, v.version);
   ok((await S.getState(code, tok[turn])).drawn != null, 'who can still play their turn');
 
+  // --- the go comes back when the game moves on -----------------------
+  /* Placed here on purpose: this ends a turn, and every assertion above
+     depends on the same person still being up. */
+  const tv2 = await S.getState(code, tok[turn]);
+  await S.applyMove(code, tok[turn], { type:'PLACE', idx:0 }, tv2.version);
+  const tv3 = await S.getState(code, tok[turn]);
+  await S.applyMove(code, tok[turn], { type:'END_TURN' }, tv3.version);
+  const fresh = await S.getState(code, tok[a]);
+  ok(fresh.burnedBy === null, 'a turn going by gives the table its go back');
+  ok(fresh.turn !== turn, 'because the turn has actually moved');
+
+  /* Wind it back so the rest of the file can go on talking about the same
+     people. Everything below is about who may do what out of turn, and it
+     is clearer with one fixed cast than with the seat rotating underneath
+     each assertion. */
+  await rig(db, code, function (st2) { st2.turn = turn; st2.burnedBy = null; st2.drawn = null;
+                                       st2.pendingEnd = false; });
+
   // --- one card must stay ---------------------------------------------
   await rig(db, code, function (s) {
+    s.burnedBy = null;
     s.players[a].hand = [{ id:'cZ', r: s.discard[s.discard.length-1].r, s:'S' }];
   });
   await burn(a, [0]).catch(function(){});
@@ -105,6 +159,7 @@ async function run(db, label) {
      'THE POINT: out of turn you cannot burn your last card, because that ends the round');
 
   await rig(db, code, function (s) {
+    s.burnedBy = null;
     const t = s.discard[s.discard.length-1].r;
     s.players[a].hand = [{ id:'cY1', r:t, s:'S' }, { id:'cY2', r:t, s:'H' }];
   });
@@ -113,6 +168,7 @@ async function run(db, label) {
 
   // --- the seat comes from the token, never the client -----------------
   await rig(db, code, function (s) {
+    s.burnedBy = null;
     const t = s.discard[s.discard.length-1].r;
     s.players[a].hand = [{ id:'cP', r:t, s:'S' }, { id:'cQ', r:t, s:'H' }, { id:'cR', r:'4', s:'C' }];
     s.players[b].hand = [{ id:'cS', r:t, s:'D' }, { id:'cT', r:t, s:'C' }, { id:'cU', r:'5', s:'H' }];
@@ -137,6 +193,30 @@ async function run(db, label) {
   await throws(() => S.applyMove(code, tok[a], { type:'SLAP_GO' }, v2.version), 400,
                'a burn with no selection is refused rather than guessing');
 
+  /* The cap lives in the engine AND at the door, and the door was hiding
+     the engine. Removing the reducer's guard left every assertion above
+     still passing, because applyMove refuses it first. So the reducer is
+     also checked on its own, with no service anywhere near it. */
+  {
+    const E = require('../lib/engine.js');
+    const base = {
+      phase:'turn', turn:0, burnedBy:2, discard:[{id:'c1',r:'7',s:'S'}], deck:[],
+      sel:[], log:[], round:1, players:[
+        { id:'bee', name:'Hrutik', hand:[{id:'h1',r:'7',s:'H'},{id:'h2',r:'2',s:'C'}] },
+        { id:'deer', name:'Sharayu', hand:[{id:'d1',r:'7',s:'D'},{id:'d2',r:'3',s:'C'}] },
+        { id:'snake', name:'Shivani', hand:[{id:'s1',r:'7',s:'C'},{id:'s2',r:'4',s:'C'}] }
+      ]
+    };
+    const blocked = E.reducer(base, { type:'SLAP_GO', by:1, idx:[0] });
+    ok(blocked.players[1].hand.length === 2,
+       'the reducer refuses a second burn on its own, with no service involved');
+
+    const open = E.reducer(Object.assign({}, base, { burnedBy:null }),
+                           { type:'SLAP_GO', by:1, idx:[0] });
+    ok(open.players[1].hand.length === 1, 'and allows the first one');
+    ok(open.burnedBy === 1, 'recording who took it');
+  }
+
   // --- a burn must not wind the turn clock back ------------------------
   const g = await db.getGameByCode(code);
   const long = new Date(Date.now() - 50 * 3600000).toISOString();
@@ -149,6 +229,7 @@ async function run(db, label) {
      (beforeClock ? beforeClock.hours + 'h' : 'no clock') + ')');
 
   await rig(db, code, function (s) {
+    s.burnedBy = null;
     s.players[a].hand = [{ id:'cW1', r:s.discard[s.discard.length-1].r, s:'S' },
                          { id:'cW2', r:'9', s:'H' }];
   });

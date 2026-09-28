@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Outfit:wght@300;400;500;600;700&display=swap">
-<link rel="stylesheet" href="/style.css?v=20260928-0026">
+<link rel="stylesheet" href="/style.css?v=20260928-2320">
 </head>
 <body>
 <div id="app"></div>
@@ -16,10 +16,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
-<script src="/engine.js?v=20260928-0026"></script>
-<script src="/cards.js?v=20260928-0026"></script>
-<script src="/anim.js?v=20260928-0026"></script>
-<script src="/voices.js?v=20260928-0026"></script>
+<script src="/engine.js?v=20260928-2320"></script>
+<script src="/cards.js?v=20260928-2320"></script>
+<script src="/anim.js?v=20260928-2320"></script>
+<script src="/voices.js?v=20260928-2320"></script>
 <script>
 (function () {
 'use strict';
@@ -35,7 +35,7 @@
 /* Which build you are actually looking at. Shown at the foot of the rule
    book and put on window, because "have I really got the new one" was
    guesswork for an afternoon and it should be a five second answer. */
-var BUILD = '20260928-0026';
+var BUILD = '20260928-2320';
 try { window.BUILD = BUILD; } catch(e){}
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
@@ -727,7 +727,12 @@ function WaitScreen(props){
   var b0 = useState([]), burnSel = b0[0], setBurnSel = b0[1];
   var top = view.discardTop;
   var mine = (view.you && view.you.hand) || [];
-  var canBurn = !!top && !!props.burn && mine.length > 1;
+  /* One go between turns, and whoever presses first takes it. Gone means
+     gone: the button is not there to press. */
+  var gone = view.burnedBy != null;
+  var goneTo = gone ? (view.players[view.burnedBy] || {}).name : null;
+  var mineAlready = gone && view.burnedBy === view.you.seat;
+  var canBurn = !!top && !!props.burn && mine.length > 1 && !gone;
   useEffect(function(){ setBurnSel([]); }, [top && top.id, view.turn, view.round]);
 
   function toggleBurn(i){
@@ -776,9 +781,15 @@ function WaitScreen(props){
               'Burn ' + burnSel.length + (burnSel.length === 1 ? ' card' : ' cards')
                 + ' onto the ' + top.r)
           : P({className:'hint', style:{marginTop:'2px'}},
-              'The pile shows a ' + top.r + '. Tap any of yours you think match and burn them, '
-              + 'without waiting for your turn. Wrong and you take a penalty card.'))
-      : null,
+              'The pile shows a ' + top.r + '. First to call it gets it. '
+              + 'Tap any of yours you think match and burn, without waiting for your turn. '
+              + 'Wrong and you keep it and take a penalty card, and that was the one go.'))
+      : (gone && top
+          ? P({className:'hint', style:{marginTop:'2px'}},
+              mineAlready
+                ? 'You already had your go at this one. Next turn.'
+                : goneTo + ' called this one first. Next turn.')
+          : null),
 
     h(Briefing, { b: view.briefing }),
     div({style:{flex:1, minHeight:'6px'}}),
@@ -1666,9 +1677,9 @@ function RuleBook(props){
           h('b',null,'Wrong and you take a penalty card.'), ' Two at once is a Vada Pav, three a Misal, all four a Thali.')),
         Row('t2b', 'Burning early', h('span',null,
           h('b',null,'You do not have to wait for your turn to do it.'),
-          ' If the pile shows a rank you are holding, burn it whenever you notice. A burned card lands face up, so the rank on top does not change and everybody holding one can dump theirs. ',
-          h('b',null,'Nobody has to be quickest.'),
-          ' Out of turn you must keep one card, because emptying your hand ends the round and that is yours to do on your own turn. No dishes either: the Feast is a turn play.')),
+          ' If the pile shows a rank you are holding, burn it the moment you notice. ',
+          h('b',null,'One go between turns, and the first person to call it takes it'),
+          ', so it is worth having your phone open. Wrong and you keep the card, take a penalty on top, and that was the go: nobody else gets one until somebody plays. Out of turn you must also keep at least one card, because emptying your hand ends the round and that is yours to do on your own turn. No dishes either: the Feast is a turn play.')),
         Row('t3', '📣 Cabo', h('span',null,
           '“I am lowest, end the round.” Everyone else gets one last turn, then all hands flip. Right, you score ',
           h('b',null,'zero'), '. Wrong, you score your hand ', h('b',null,'plus ten'), '.'))),

@@ -197,8 +197,12 @@ const HOW = {
          penalty machine, and the Tab fills up with nothing but its mistakes. */
       if (!burnedThisTurn) {
         burnedThisTurn = true;
+        /* One go between turns for the whole table, so at most one of them
+           gets it and the rest are too late. Which is the rule, and the
+           reason the log is no longer three hundred lines of penalties. */
         for (const i of Object.keys(tok)) {
           const bv = await get('/api/state?code=' + room.code + '&token=' + tok[i]);
+          if (bv.burnedBy != null) break;
           if (bv.you.hand.length <= 1) continue;
           const sure = knownMatches(i, bv);
           if (!sure.length) continue;
@@ -206,7 +210,7 @@ const HOW = {
             await post('/api/move', { code: room.code, token: tok[i],
                         move:{ type:'SLAP_GO', idx: [sure[0]] }, expectedVersion: bv.version });
             delete brain[i][sure[0]];
-            say(ROSTER[i].name + ' burned a ' + bv.discardTop.r + ' while you were thinking');
+            say(ROSTER[i].name + ' called the ' + bv.discardTop.r + ' and burned one');
           } catch(e){}
           break;
         }
