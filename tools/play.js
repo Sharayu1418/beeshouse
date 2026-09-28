@@ -59,6 +59,44 @@ async function get(path){
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const say = (s) => console.log('   ' + s);
 
+/* What each of them thinks they know about their own hand.
+ *
+ * They are playing the same game you are: they cannot see their own cards
+ * and the server will not tell them. So they remember the two they looked
+ * at, and any card they drew and placed themselves, and nothing else.
+ *
+ * Kept as {slot: {id, r, s}} and checked by ID on every use. If the card at
+ * that slot is no longer the one they remember, the memory is wrong and is
+ * thrown away. Somebody swapped with them, or stung them, or the snake
+ * shed and every id in her hand changed. That last one is Shed working: her
+ * own memory of her hand empties along with everyone else's.
+ *
+ * Without this they burned blind, were wrong about ninety four times in a
+ * hundred, and turned the table into a penalty machine. Which is a fair
+ * description of what happens to a person who slaps without looking. */
+const brain = {};
+function remember(seat, slot, card){
+  brain[seat] = brain[seat] || {};
+  brain[seat][slot] = { id: card.id, r: card.r, s: card.s };
+}
+function recall(seat, slot, hand){
+  const m = brain[seat] && brain[seat][slot];
+  if (!m) return null;
+  const now = hand[slot];
+  if (!now || now.id !== m.id) { delete brain[seat][slot]; return null; }   // not theirs any more
+  return m;
+}
+/* Which of their own cards they are confident match the pile. */
+function knownMatches(seat, v){
+  if (!v.discardTop) return [];
+  const out = [];
+  v.you.hand.forEach(function(c, i){
+    const m = recall(seat, i, v.you.hand);
+    if (m && m.r === v.discardTop.r) out.push(i);
+  });
+  return out;
+}
+
 /* What each of them is likely to do, so the table has some character rather
    than five people drawing and discarding at each other for an hour. */
 function choose(v, me, seat){
@@ -73,8 +111,13 @@ function choose(v, me, seat){
   // the abilities are the interesting part, so they get used early and often
   if (!v.you.abilityUsed && Math.random() < 0.45) return { type:'ABILITY' };
   if (!v.you.sweepUsed && v.discardCount > 2 && Math.random() < 0.15) return { type:'SWEEP' };
-  if (v.drawn) return me.handCount ? { type:'PLACE', idx: Math.floor(Math.random()*me.handCount) }
-                                   : { type:'DISCARD_DRAWN' };
+  if (v.drawn) {
+    if (!me.handCount) return { type:'DISCARD_DRAWN' };
+    /* Putting a card you have just looked at into a slot you have chosen is
+       the other half of how anybody knows anything in this game. */
+    const idx = Math.floor(Math.random()*me.handCount);
+    return { type:'PLACE', idx: idx, _learn: { slot: idx, card: v.drawn } };
+  }
   if (v.caboBy === null && v.round >= 2 && Math.random() < 0.08) return { type:'CABO' };
   return Math.random() < 0.15 && v.discardTop ? { type:'TAKE_DISCARD' } : { type:'DRAW' };
 }
@@ -117,14 +160,17 @@ const HOW = {
   /* Their opening looks, spread out, so you can watch them happen from your
      own screen. This is the gesture that has no motion of its own. */
   for (const i of Object.keys(tok)) {
-    await post('/api/peek', { code: room.code, token: tok[i], indices:[0, 1+Math.floor(Math.random()*3)] }).catch(()=>{});
+    const look = await post('/api/peek', { code: room.code, token: tok[i],
+                     indices:[0, 1+Math.floor(Math.random()*3)] }).catch(()=>null);
+    if (look && look.reveal && look.reveal.cards)
+      look.reveal.cards.forEach(function(c){ remember(i, c.slot, c); });
     await sleep(PAUSE);
     await post('/api/ready', { code: room.code, token: tok[i] }).catch(()=>{});
     if (!QUIET) say(ROSTER[i].name + ' looked at two of their own');
   }
   console.log('\n  Waiting for you to say you are ready.\n');
 
-  let waiting = false, lastTurn = -1, guard = 0;
+  let waiting = false, lastTurn = -1, guard = 0, burnedThisTurn = false;
   while (guard++ < 20000) {
     let v;
     try { v = await get('/api/state?code=' + room.code + '&token=' + any); }
@@ -140,29 +186,29 @@ const HOW = {
     if (v.phase !== 'turn') { await sleep(1200); continue; }
 
     if (v.turn === HUMAN) {
-      if (!waiting) { console.log('\n  Your turn. Go on.\n'); waiting = true; }
+      if (!waiting) { console.log('\n  Your turn. Go on.\n'); waiting = true; burnedThisTurn = false; }
       await sleep(1200);
 
       /* While they wait, somebody occasionally burns a match off turn, which
          is the one thing anybody may do at any time. Worth seeing from your
          seat: it happens while you are still deciding. */
-      if (Math.random() < 0.12) {
-        const i = Object.keys(tok)[Math.floor(Math.random()*4)];
-        const bv = await get('/api/state?code=' + room.code + '&token=' + tok[i]);
-        if (bv.you.hand.length > 1 && bv.discardTop) {
-          const before = bv.you.hand.length;
-          const pick = [Math.floor(Math.random() * before)];
+      /* One attempt per turn of yours, and only on a card they believe they
+         are holding. A bot that burns blind is not a player, it is a
+         penalty machine, and the Tab fills up with nothing but its mistakes. */
+      if (!burnedThisTurn) {
+        burnedThisTurn = true;
+        for (const i of Object.keys(tok)) {
+          const bv = await get('/api/state?code=' + room.code + '&token=' + tok[i]);
+          if (bv.you.hand.length <= 1) continue;
+          const sure = knownMatches(i, bv);
+          if (!sure.length) continue;
           try {
             await post('/api/move', { code: room.code, token: tok[i],
-                        move:{ type:'SLAP_GO', idx: pick }, expectedVersion: bv.version });
-            /* They are guessing, same as you: nobody can see their own
-               cards. So say which way it went rather than calling every
-               attempt a hit. */
-            const after = (await get('/api/state?code=' + room.code + '&token=' + tok[i])).you.hand.length;
-            say(after < before
-              ? ROSTER[i].name + ' burned a ' + bv.discardTop.r + ' while you were thinking'
-              : ROSTER[i].name + ' guessed wrong and took a penalty card');
+                        move:{ type:'SLAP_GO', idx: [sure[0]] }, expectedVersion: bv.version });
+            delete brain[i][sure[0]];
+            say(ROSTER[i].name + ' burned a ' + bv.discardTop.r + ' while you were thinking');
           } catch(e){}
+          break;
         }
       }
       continue;
@@ -178,6 +224,14 @@ const HOW = {
     try {
       await post('/api/move', { code: room.code, token: tok[seat], move: move,
                                 expectedVersion: mv.version });
+      if (move._learn) {
+        /* They saw the card go in, so from here they know that slot until
+           somebody takes it off them. */
+        const now = await get('/api/state?code=' + room.code + '&token=' + tok[seat]);
+        const landed = now.you.hand[move._learn.slot];
+        if (landed) remember(seat, move._learn.slot,
+                             { id: landed.id, r: move._learn.card.r, s: move._learn.card.s });
+      }
       if (!QUIET && HOW[move.type]) say(ROSTER[seat].name + ' ' + HOW[move.type]);
     } catch (e) { if (e.status !== 409) say(ROSTER[seat].name + ': ' + e.message); }
     await sleep(PAUSE);
